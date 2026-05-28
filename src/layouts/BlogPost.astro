@@ -18,21 +18,24 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
   </head>
   <body>
     <Header />
-    <main class="post-layout">
-      <article class="post-shell">
+    <main class="post-layout container">
+      <article class="post-shell light-card">
+        <div class="post-header">
+          <div class="meta-row">
+            <span class="post-chip"><FormattedDate date={pubDate} /></span>
+            <span class="post-chip">C++ / 基础专题</span>
+            {updatedDate && <span class="post-chip">更新于 <FormattedDate date={updatedDate} /></span>}
+          </div>
+          <h1>{title}</h1>
+          <p class="post-description">{description}</p>
+        </div>
+
         {heroImage && (
           <div class="hero-image">
             <Image width={1200} height={630} src={heroImage} alt="" />
           </div>
         )}
-        <div class="post-header">
-          <p class="post-meta"><FormattedDate date={pubDate} /></p>
-          <h1>{title}</h1>
-          <p class="post-description">{description}</p>
-          {updatedDate && (
-            <p class="post-update">最后更新：<FormattedDate date={updatedDate} /></p>
-          )}
-        </div>
+
         <div class="prose">
           <slot />
         </div>
@@ -44,67 +47,95 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
 
 <style>
   .post-layout {
-    width: min(960px, calc(100% - 2rem));
-    margin: 0 auto;
     padding: 2rem 0 3rem;
   }
 
   .post-shell {
-    padding: 2rem;
-    border-radius: 1.75rem;
-    background: rgba(255, 255, 255, 0.82);
-    border: 1px solid rgba(var(--border), 0.8);
-    box-shadow: 0 20px 40px rgba(var(--shadow), 0.08);
-  }
-
-  .hero-image {
-    margin-bottom: 1.5rem;
-  }
-
-  .hero-image img {
-    display: block;
-    width: 100%;
-    border-radius: 1.2rem;
+    padding: 1.8rem;
   }
 
   .post-header {
-    margin-bottom: 2rem;
-    padding-bottom: 1.5rem;
-    border-bottom: 1px solid rgba(var(--border), 0.8);
+    max-width: 48rem;
+    margin-bottom: 1.4rem;
   }
 
-  .post-meta {
+  .meta-row {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+
+  .post-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.1);
     color: rgb(var(--accent));
+    font-size: 0.9rem;
     font-weight: 700;
   }
 
-  .post-description,
-  .post-update {
-    color: rgb(var(--text-muted));
+  .post-shell h1 {
+    color: rgb(var(--text-dark));
+    font-size: clamp(2.4rem, 5vw, 4rem);
+  }
+
+  .post-description {
+    color: rgb(var(--text-dark-muted));
+    font-size: 1.08rem;
+  }
+
+  .hero-image {
+    margin-bottom: 1.8rem;
+    overflow: hidden;
+    border-radius: 1.35rem;
+  }
+
+  .hero-image img {
+    width: 100%;
   }
 
   .prose {
-    max-width: 100%;
+    max-width: 48rem;
+    color: rgb(var(--text-dark));
   }
 
-  .prose ul,
-  .prose ol {
-    padding-left: 1.3rem;
-  }
-
-  .prose h2,
-  .prose h3 {
+  .prose :global(h2),
+  .prose :global(h3),
+  .prose :global(h4) {
+    color: rgb(var(--text-dark));
     margin-top: 2rem;
+  }
+
+  .prose :global(p),
+  .prose :global(li),
+  .prose :global(blockquote) {
+    color: rgb(var(--text-dark-muted));
+  }
+
+  .prose :global(blockquote) p {
+    color: rgb(var(--text-dark));
+  }
+
+  .prose :global(ul),
+  .prose :global(ol) {
+    padding-left: 1.35rem;
+  }
+
+  .prose :global(a) {
+    color: rgb(var(--accent));
   }
 
   @media (max-width: 720px) {
     .post-layout {
-      width: min(100% - 1rem, 960px);
       padding-top: 1rem;
     }
 
     .post-shell {
-      padding: 1.25rem;
+      padding: 1.2rem;
     }
   }
 </style>

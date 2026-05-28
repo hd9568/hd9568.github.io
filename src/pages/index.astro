@@ -1,32 +1,17 @@
 ---
+import { Image } from 'astro:assets';
 import { getCollection } from 'astro:content';
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import FormattedDate from '../components/FormattedDate.astro';
-import {
-  SITE_DESCRIPTION,
-  SITE_EMAIL,
-  SITE_GITHUB,
-  SITE_NAME,
-  SITE_REPO_HINT,
-  SITE_ROLE,
-  SITE_TITLE,
-} from '../consts';
+import { SITE_GITHUB, SITE_NAME, SITE_TITLE, SITE_DESCRIPTION } from '../consts';
+import avatar from '../assets/avatar.png';
 
 const posts = (await getCollection('blog')).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
 const latestPost = posts[0];
-const focusAreas = [
-  'C++ 内存管理与现代语义',
-  'CUDA 与访存优化',
-  'LLM 推理框架与算子加速',
-  '分布式训练与系统设计',
-];
-const learningStyle = [
-  '每篇文章先讲核心概念，再讲为什么重要。',
-  '尽量使用小代码片段解释，不堆复杂公式。',
-  '围绕 AI Infra 面试高频点持续更新。',
-];
+const restPosts = posts.slice(1, 4);
+const topics = ['C++', 'CUDA', 'Inference', 'Training'];
 ---
 
 <!doctype html>
@@ -36,78 +21,60 @@ const learningStyle = [
   </head>
   <body>
     <Header />
-    <main class="home">
-      <section class="hero card">
-        <div class="hero-copy">
-          <p class="eyebrow">个人技术博客</p>
-          <h1>{SITE_NAME}</h1>
-          <p class="hero-role">{SITE_ROLE}</p>
-          <p class="hero-text">
-            这里记录我为秋招准备 AI Infra、训练优化、推理优化岗位时的系统化学习笔记。
-            我会把面经里的知识点拆成一篇篇通俗文章，既方便自己复习，也方便对外展示技术积累。
-          </p>
-          <div class="hero-actions">
-            <a class="button primary" href="/blog">开始阅读</a>
-            <a class="button secondary" href="/about">了解我</a>
-          </div>
-        </div>
-        <div class="hero-side">
-          <div class="side-panel">
-            <p class="panel-title">目前聚焦</p>
-            <ul>
-              {focusAreas.map((item) => <li>{item}</li>)}
-            </ul>
-          </div>
-          <div class="side-panel compact">
-            <p class="panel-title">博客定位</p>
-            <p>简洁、可持续更新、适合 GitHub Pages 长期托管。</p>
-            <p class="repo-hint">{SITE_REPO_HINT}</p>
-          </div>
-        </div>
-      </section>
+    <main>
+      <section class="hero-wrap">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">{SITE_NAME}</p>
+            <h1>AI Infra / 训推优化学习笔记</h1>
+            <p class="hero-subtitle">记录 C++、CUDA、推理优化与训练优化。</p>
 
-      <section class="grid-section">
-        <article class="card">
-          <p class="section-kicker">写作方式</p>
-          <h2>知识点拆解成可复习的短文</h2>
-          <ul class="bullet-list">
-            {learningStyle.map((item) => <li>{item}</li>)}
-          </ul>
-        </article>
-
-        <article class="card">
-          <p class="section-kicker">联系与主页</p>
-          <h2>对外展示入口</h2>
-          <div class="contact-list">
-            <a href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub: hd9568</a>
-            <a href={`mailto:${SITE_EMAIL}`}>邮箱: {SITE_EMAIL}</a>
-          </div>
-        </article>
-      </section>
-
-      <section class="latest">
-        <div class="section-head">
-          <div>
-            <p class="section-kicker">最新内容</p>
-            <h2>从 C++ 基础开始，逐步走向 AI Infra</h2>
-          </div>
-          <a class="text-link" href="/blog">查看全部文章</a>
-        </div>
-
-        {latestPost ? (
-          <article class="card post-highlight">
-            <div>
-              <p class="post-date"><FormattedDate date={latestPost.data.pubDate} /></p>
-              <h3>{latestPost.data.title}</h3>
-              <p>{latestPost.data.description}</p>
+            <div class="hero-actions">
+              <a class="button primary" href="/blog">查看文章</a>
+              <a class="button secondary" href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub</a>
             </div>
+
+            <div class="hero-topics">
+              {topics.map((topic) => <span class="kbd-like">{topic}</span>)}
+            </div>
+          </div>
+
+          <div class="avatar-card card">
+            <div class="avatar-frame">
+              <Image src={avatar} alt="霍墨墨头像" width={720} height={720} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="container content-grid">
+        {latestPost && (
+          <article class="latest-card light-card">
+            <div class="latest-head">
+              <p class="eyebrow">Latest</p>
+              <p class="latest-date"><FormattedDate date={latestPost.data.pubDate} /></p>
+            </div>
+            <h2>{latestPost.data.title}</h2>
+            <p class="latest-description">{latestPost.data.description}</p>
             <a class="button primary" href={`/blog/${latestPost.id}/`}>阅读全文</a>
           </article>
-        ) : (
-          <article class="card post-highlight">
-            <p>文章正在准备中。</p>
-          </article>
         )}
+
+        <section class="archive-card light-card">
+          <div class="archive-head">
+            <p class="eyebrow">Archive</p>
+            <a class="archive-link" href="/blog">全部文章</a>
+          </div>
+
+          <div class="archive-list">
+            {(restPosts.length ? restPosts : posts.slice(0, 1)).map((post) => (
+              <a class="archive-item" href={`/blog/${post.id}/`}>
+                <span class="archive-title">{post.data.title}</span>
+                <span class="archive-date"><FormattedDate date={post.data.pubDate} /></span>
+              </a>
+            ))}
+          </div>
+        </section>
       </section>
     </main>
     <Footer />
@@ -115,139 +82,162 @@ const learningStyle = [
 </html>
 
 <style>
-  .home {
-    width: min(1120px, calc(100% - 2rem));
-    margin: 0 auto;
-    padding: 2rem 0 3rem;
+  .hero-wrap {
+    padding: 1.5rem 0 3rem;
   }
 
-  .hero {
+  .hero-grid {
     display: grid;
-    grid-template-columns: 1.5fr 1fr;
-    gap: 1.5rem;
-    padding: 2rem;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+    gap: 1rem;
+    align-items: center;
   }
 
-  .eyebrow,
-  .section-kicker,
-  .post-date,
-  .panel-title,
-  .repo-hint {
-    color: rgb(var(--accent));
-    font-weight: 700;
-    letter-spacing: 0.02em;
+  .hero-copy {
+    min-width: 0;
+    padding: 2rem 0 1.5rem;
   }
 
-  .hero-copy h1 {
-    font-size: clamp(2.8rem, 6vw, 4.5rem);
-    margin-bottom: 0.5rem;
+  .hero-subtitle {
+    max-width: 32rem;
+    font-size: 1.08rem;
   }
 
-  .hero-role {
-    margin-bottom: 1rem;
-    font-size: 1.1rem;
-    color: rgb(var(--text-muted));
-  }
-
-  .hero-text {
-    max-width: 44rem;
-    font-size: 1.05rem;
+  .hero-actions,
+  .hero-topics {
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
   }
 
   .hero-actions {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
     margin-top: 1.5rem;
   }
 
-  .hero-side {
-    display: grid;
-    gap: 1rem;
-  }
-
-  .side-panel {
-    padding: 1.4rem;
-    border-radius: 1.25rem;
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(var(--border), 0.8);
-  }
-
-  .side-panel ul {
-    margin: 0.8rem 0 0;
-    padding-left: 1.2rem;
-  }
-
-  .compact p:last-child {
-    margin-bottom: 0;
-  }
-
-  .grid-section {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1.25rem;
-    margin-top: 1.25rem;
-  }
-
-  .latest {
-    margin-top: 1.5rem;
-  }
-
-  .section-head {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  .bullet-list {
-    margin: 1rem 0 0;
-    padding-left: 1.2rem;
-  }
-
-  .contact-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.8rem;
+  .hero-topics {
     margin-top: 1rem;
   }
 
-  .contact-list a,
-  .text-link {
-    color: rgb(var(--text-strong));
-    text-decoration: none;
+  .avatar-card {
+    width: 100%;
+    max-width: 280px;
+    justify-self: end;
+    padding: 0.75rem;
   }
 
-  .post-highlight {
+  .avatar-frame {
+    overflow: hidden;
+    border-radius: calc(var(--radius-xl) - 6px);
+    aspect-ratio: 1 / 1;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .avatar-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .content-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    gap: 1.2rem;
+    padding-bottom: 2.5rem;
+  }
+
+  .latest-card,
+  .archive-card {
+    padding: 1.4rem;
+  }
+
+  .latest-head,
+  .archive-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
+    margin-bottom: 0.8rem;
+  }
+
+  .latest-card h2,
+  .archive-title {
+    color: rgb(var(--text-dark));
+  }
+
+  .latest-date,
+  .latest-description,
+  .archive-date {
+    color: rgb(var(--text-dark-muted));
+  }
+
+  .archive-head {
+    margin-bottom: 1rem;
+  }
+
+  .archive-link {
+    color: rgb(var(--text-dark));
+    text-decoration: none;
+    font-weight: 700;
+  }
+
+  .archive-list {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .archive-item {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.95rem 1rem;
+    border-radius: 1rem;
+    background: rgb(var(--surface-muted));
+    text-decoration: none;
+  }
+
+  .archive-date {
+    font-size: 0.92rem;
   }
 
   @media (max-width: 900px) {
-    .hero,
-    .grid-section {
+    .hero-grid,
+    .content-grid {
       grid-template-columns: 1fr;
+    }
+
+    .avatar-card {
+      max-width: 220px;
+      justify-self: start;
     }
   }
 
   @media (max-width: 720px) {
-    .home {
-      width: min(100% - 1rem, 1120px);
+    .hero-wrap {
       padding-top: 1rem;
+      padding-bottom: 2rem;
     }
 
-    .hero,
-    .card {
-      padding: 1.25rem;
+    .hero-copy {
+      padding-top: 1.2rem;
     }
 
-    .section-head,
-    .post-highlight {
-      flex-direction: column;
+    .hero-actions .button {
+      width: 100%;
+    }
+
+    .avatar-card,
+    .latest-card,
+    .archive-card {
+      padding: 1rem;
+    }
+
+    .avatar-card {
+      max-width: 180px;
+    }
+
+    .latest-head,
+    .archive-head {
       align-items: flex-start;
+      flex-direction: column;
     }
   }
 </style>

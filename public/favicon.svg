@@ -1,10 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#38bdf8" />
+    <clipPath id="clip">
+      <rect x="4" y="4" width="56" height="56" rx="18" ry="18" />
+    </clipPath>
+    <linearGradient id="frame" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d1fae5" />
+      <stop offset="100%" stop-color="#10b981" />
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="18" fill="url(#g)" />
-  <text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="white">HM</text>
+  <rect width="64" height="64" rx="20" fill="#0b1018" />
+  <rect x="2" y="2" width="60" height="60" rx="19" fill="none" stroke="url(#frame)" stroke-width="2" />
+  <image href="/favicon-avatar.png" x="4" y="4" width="56" height="56" preserveAspectRatio="xMidYMid slice" clip-path="url(#clip)" />
 </svg>

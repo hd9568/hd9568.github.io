@@ -4,14 +4,15 @@ import { SITE_GITHUB, SITE_NAME } from '../consts';
 ---
 
 <header class="site-header">
-  <nav>
+  <nav class="container nav-shell">
     <a class="brand" href="/">
       <span class="brand-mark">HM</span>
-      <span>
+      <span class="brand-copy">
         <strong>{SITE_NAME}</strong>
         <small>AI Infra Notes</small>
       </span>
     </a>
+
     <div class="nav-links">
       <HeaderLink href="/">首页</HeaderLink>
       <HeaderLink href="/blog">文章</HeaderLink>
@@ -25,23 +26,27 @@ import { SITE_GITHUB, SITE_NAME } from '../consts';
   .site-header {
     position: sticky;
     top: 0;
-    z-index: 20;
-    padding: 1rem 1.25rem;
-    backdrop-filter: blur(18px);
-    background: rgba(248, 250, 252, 0.8);
-    border-bottom: 1px solid rgba(var(--border), 0.7);
+    z-index: 30;
+    padding: 1rem 0 0;
+    background: linear-gradient(180deg, rgba(6, 9, 20, 0.88), rgba(6, 9, 20, 0.4), transparent);
+    backdrop-filter: blur(16px);
   }
 
-  nav {
-    width: min(1120px, calc(100% - 1rem));
-    margin: 0 auto;
+  .nav-shell {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
+    min-width: 0;
+    padding: 0.7rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    background: rgba(8, 12, 28, 0.72);
+    box-shadow: 0 18px 44px rgba(2, 6, 23, 0.34);
   }
 
   .brand {
+    min-width: 0;
     display: inline-flex;
     align-items: center;
     gap: 0.85rem;
@@ -49,69 +54,94 @@ import { SITE_GITHUB, SITE_NAME } from '../consts';
     text-decoration: none;
   }
 
-  .brand strong,
-  .brand small {
-    display: block;
-  }
-
-  .brand strong {
-    font-size: 1rem;
-  }
-
-  .brand small {
-    color: rgb(var(--text-muted));
-    font-size: 0.85rem;
-  }
-
   .brand-mark {
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 0.9rem;
+    flex: 0 0 auto;
+    width: 2.7rem;
+    height: 2.7rem;
+    border-radius: 0.95rem;
     display: grid;
     place-items: center;
     background: linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-soft)));
     color: white;
-    font-size: 0.9rem;
-    font-weight: 700;
+    font-size: 0.92rem;
+    font-weight: 800;
     letter-spacing: 0.08em;
-    box-shadow: 0 12px 24px rgba(var(--accent), 0.25);
+    box-shadow: 0 14px 28px rgba(var(--accent), 0.24);
+  }
+
+  .brand-copy {
+    min-width: 0;
+  }
+
+  .brand strong,
+  .brand small {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+
+  .brand strong {
+    font-size: 0.98rem;
+  }
+
+  .brand small {
+    color: rgb(var(--text-muted));
+    font-size: 0.82rem;
   }
 
   .nav-links {
+    min-width: 0;
     display: flex;
     align-items: center;
-    gap: 0.25rem;
+    justify-content: flex-end;
+    gap: 0.3rem;
     flex-wrap: wrap;
   }
 
   .github-link {
-    margin-left: 0.35rem;
-    padding: 0.72rem 1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.6rem;
+    padding: 0.45rem 0.95rem;
     border-radius: 999px;
-    background: rgb(var(--surface-strong));
-    color: white;
+    background: rgb(var(--text-strong));
+    color: rgb(15, 23, 42);
     text-decoration: none;
     font-size: 0.92rem;
+    font-weight: 700;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
   }
 
-  @media (max-width: 720px) {
-    .site-header {
-      padding: 0.85rem 1rem;
-    }
+  .github-link:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 20px rgba(255, 255, 255, 0.12);
+    color: rgb(15, 23, 42);
+  }
 
-    nav {
-      width: 100%;
-      flex-direction: column;
+  @media (max-width: 860px) {
+    .nav-shell {
+      border-radius: 1.5rem;
       align-items: flex-start;
+      flex-direction: column;
     }
 
     .nav-links {
       width: 100%;
-      justify-content: space-between;
+      justify-content: flex-start;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .site-header {
+      padding-top: 0.6rem;
     }
 
-    .github-link {
-      margin-left: 0;
+    .nav-shell {
+      padding: 0.8rem;
+    }
+
+    .brand {
+      width: 100%;
     }
   }
 </style>
