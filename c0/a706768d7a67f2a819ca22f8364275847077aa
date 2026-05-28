@@ -1,0 +1,57 @@
+.gitignore
+  8e34aef3b03903b0 22 gitai:{"mixed_line_ranges":[],"operations":[{"operation_id":"6a17dab0aab801cdb7c22839","tool_type":"agent","tool_id":"apply_patch","line_ranges":[{"Single":22}]}]}
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c0a706768d7a67f2a819ca22f8364275847077aa",
+  "prompts": {
+    "8e34aef3b03903b0": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a17c4a5aab801cdb7c2263c",
+        "model": "gpt-5.4__dev"
+      },
+      "human_author": "霍墨墨 <2358440725@qq.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  },
+  "attestation_metadata": {
+    ".gitignore": [
+      {
+        "hash": "8e34aef3b03903b0",
+        "line_ranges": [
+          {
+            "Single": 22
+          }
+        ],
+        "mixed_line_ranges": [],
+        "operations": [
+          {
+            "operation_id": "6a17dab0aab801cdb7c22839",
+            "tool_type": "agent",
+            "tool_id": "apply_patch",
+            "line_ranges": [
+              {
+                "Single": 22
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "remote_transcripts": {
+    "8e34aef3b03903b0": {
+      "tool": "trae",
+      "conversation_id": "6a17c4a5aab801cdb7c2263c",
+      "session_id": "6a17c4a5aab801cdb7c2263c",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    }
+  }
+}
