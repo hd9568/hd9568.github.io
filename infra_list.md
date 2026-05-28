@@ -22,7 +22,7 @@ CUDA 是 AI Infra 工程师的看家本领。面试官会直接让你手撕常�
 [ ] Warp 机制：Warp Divergence（分支分化）的原因与避免、Active Mask、Warp 级原语（__shfl_sync 等）。
 2. CUDA 内存模型与访存优化 (极其高频)
 [ ] Global Memory（全局内存）：合并访问（Coalesced Memory Access）的原理与对齐要求。
-[ ] Shared Memory（共享内存）：Bank Conflict（银行冲突）的产生原理与解决（如 Padding 填充策略）。
+[ ] Shared Memory（共享内存）：Bank Conflict（Bank 冲突）的产生原理与解决（如 Padding 填充策略、 Swizzle 技术）。
 [ ] Registers（寄存器）：寄存器溢出（Register Spilling）对性能的影响（Local Memory 访问）。
 [ ] Constant Memory 与 Texture Memory：适用场景（如只读广播数据）。
 3. CUDA 进阶性能优化策略
