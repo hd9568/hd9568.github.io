@@ -7,7 +7,7 @@ import Header from '../../components/Header.astro';
 import { SITE_DESCRIPTION, SITE_TITLE } from '../../consts';
 
 const posts = (await getCollection('blog')).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
-const categoryOrder = ['C++', '操作系统与多线程'];
+const categoryOrder = ['C++', '操作系统与多线程', 'CUDA'];
 const fallbackCategory = '未分类';
 const groupedPosts = categoryOrder
   .map((category) => ({
@@ -88,7 +88,7 @@ if (uncategorizedPosts.length > 0) {
 
   .category-nav {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem;
     margin-bottom: 1.6rem;
   }
