@@ -4,17 +4,36 @@ import BlogPost from '../../layouts/BlogPost.astro';
 
 export async function getStaticPaths() {
 	const posts = await getCollection('blog');
+	const orderedPosts = [...posts].sort((a, b) => {
+		const categoryCompare = (a.data.category ?? '').localeCompare(b.data.category ?? '', 'zh-CN');
+		if (categoryCompare !== 0) return categoryCompare;
+		return a.data.pubDate.valueOf() - b.data.pubDate.valueOf();
+	});
+
 	return posts.map((post) => ({
 		params: { slug: post.id },
-		props: post,
+		props: {
+			post,
+			previousPost: orderedPosts
+				.filter((item) => item.data.category === post.data.category)
+				.find((item, index, categoryPosts) => categoryPosts[index + 1]?.id === post.id),
+			nextPost: orderedPosts
+				.filter((item) => item.data.category === post.data.category)
+				.find((item, index, categoryPosts) => categoryPosts[index - 1]?.id === post.id),
+		},
 	}));
 }
-type Props = CollectionEntry<'blog'>;
+type AdjacentPost = Pick<CollectionEntry<'blog'>, 'id' | 'data'>;
+type Props = {
+	post: CollectionEntry<'blog'>;
+	previousPost?: AdjacentPost;
+	nextPost?: AdjacentPost;
+};
 
-const post = Astro.props;
+const { post, previousPost, nextPost } = Astro.props;
 const { Content } = await render(post);
 ---
 
-<BlogPost {...post.data}>
+<BlogPost {...post.data} previousPost={previousPost} nextPost={nextPost}>
 	<Content />
 </BlogPost>
