@@ -1,0 +1,32 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+
+type Props = HTMLAttributes<'a'>;
+
+const { href, class: className, ...props } = Astro.props;
+const pathname = Astro.url.pathname.replace(import.meta.env.BASE_URL, '/');
+const cleanedPath = pathname.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
+const cleanedHref = typeof href === 'string' && href.endsWith('/') && href !== '/' ? href.slice(0, -1) : href;
+const isActive = cleanedHref === cleanedPath;
+---
+
+<a href={href} class:list={[className, 'nav-link', { active: isActive }]} {...props}>
+  <slot />
+</a>
+
+<style>
+  .nav-link {
+    padding: 0.72rem 0.95rem;
+    border-radius: 999px;
+    color: rgb(var(--text-muted));
+    font-size: 0.95rem;
+    transition: color 0.2s ease, background 0.2s ease;
+  }
+
+  .nav-link:hover,
+  .nav-link.active {
+    color: rgb(var(--text-strong));
+    background: rgba(var(--accent), 0.1);
+    text-decoration: none;
+  }
+</style>

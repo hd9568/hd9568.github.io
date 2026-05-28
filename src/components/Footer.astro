@@ -1,0 +1,60 @@
+---
+const year = new Date().getFullYear();
+import { SITE_EMAIL, SITE_GITHUB, SITE_NAME, SITE_ROLE } from '../consts';
+---
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <p class="footer-title">{SITE_NAME}</p>
+      <p>{SITE_ROLE}</p>
+    </div>
+    <div class="footer-links">
+      <a href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub</a>
+      <a href={`mailto:${SITE_EMAIL}`}>{SITE_EMAIL}</a>
+    </div>
+  </div>
+  <p class="footer-copy">© {year} {SITE_NAME}. Built with Astro and deployed on GitHub Pages.</p>
+</footer>
+
+<style>
+  .site-footer {
+    margin-top: 4rem;
+    padding: 2rem 1.25rem 3rem;
+    border-top: 1px solid rgba(var(--border), 0.8);
+    color: rgb(var(--text-muted));
+  }
+
+  .footer-inner {
+    width: min(1120px, calc(100% - 1rem));
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .footer-title {
+    margin-bottom: 0.35rem;
+    color: rgb(var(--text-strong));
+    font-weight: 700;
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .footer-links a {
+    color: rgb(var(--text-muted));
+    text-decoration: none;
+  }
+
+  .footer-copy {
+    width: min(1120px, calc(100% - 1rem));
+    margin: 1rem auto 0;
+    font-size: 0.95rem;
+  }
+</style>

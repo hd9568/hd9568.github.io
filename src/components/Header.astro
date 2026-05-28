@@ -1,0 +1,117 @@
+---
+import HeaderLink from './HeaderLink.astro';
+import { SITE_GITHUB, SITE_NAME } from '../consts';
+---
+
+<header class="site-header">
+  <nav>
+    <a class="brand" href="/">
+      <span class="brand-mark">HM</span>
+      <span>
+        <strong>{SITE_NAME}</strong>
+        <small>AI Infra Notes</small>
+      </span>
+    </a>
+    <div class="nav-links">
+      <HeaderLink href="/">首页</HeaderLink>
+      <HeaderLink href="/blog">文章</HeaderLink>
+      <HeaderLink href="/about">关于</HeaderLink>
+      <a class="github-link" href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub</a>
+    </div>
+  </nav>
+</header>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 1rem 1.25rem;
+    backdrop-filter: blur(18px);
+    background: rgba(248, 250, 252, 0.8);
+    border-bottom: 1px solid rgba(var(--border), 0.7);
+  }
+
+  nav {
+    width: min(1120px, calc(100% - 1rem));
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.85rem;
+    color: rgb(var(--text-strong));
+    text-decoration: none;
+  }
+
+  .brand strong,
+  .brand small {
+    display: block;
+  }
+
+  .brand strong {
+    font-size: 1rem;
+  }
+
+  .brand small {
+    color: rgb(var(--text-muted));
+    font-size: 0.85rem;
+  }
+
+  .brand-mark {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.9rem;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-soft)));
+    color: white;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    box-shadow: 0 12px 24px rgba(var(--accent), 0.25);
+  }
+
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+
+  .github-link {
+    margin-left: 0.35rem;
+    padding: 0.72rem 1rem;
+    border-radius: 999px;
+    background: rgb(var(--surface-strong));
+    color: white;
+    text-decoration: none;
+    font-size: 0.92rem;
+  }
+
+  @media (max-width: 720px) {
+    .site-header {
+      padding: 0.85rem 1rem;
+    }
+
+    nav {
+      width: 100%;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .nav-links {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .github-link {
+      margin-left: 0;
+    }
+  }
+</style>

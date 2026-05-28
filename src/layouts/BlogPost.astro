@@ -1,0 +1,110 @@
+---
+import { Image } from 'astro:assets';
+import type { CollectionEntry } from 'astro:content';
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import FormattedDate from '../components/FormattedDate.astro';
+import Header from '../components/Header.astro';
+
+type Props = CollectionEntry<'blog'>['data'];
+
+const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <BaseHead title={title} description={description} />
+  </head>
+  <body>
+    <Header />
+    <main class="post-layout">
+      <article class="post-shell">
+        {heroImage && (
+          <div class="hero-image">
+            <Image width={1200} height={630} src={heroImage} alt="" />
+          </div>
+        )}
+        <div class="post-header">
+          <p class="post-meta"><FormattedDate date={pubDate} /></p>
+          <h1>{title}</h1>
+          <p class="post-description">{description}</p>
+          {updatedDate && (
+            <p class="post-update">最后更新：<FormattedDate date={updatedDate} /></p>
+          )}
+        </div>
+        <div class="prose">
+          <slot />
+        </div>
+      </article>
+    </main>
+    <Footer />
+  </body>
+</html>
+
+<style>
+  .post-layout {
+    width: min(960px, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 2rem 0 3rem;
+  }
+
+  .post-shell {
+    padding: 2rem;
+    border-radius: 1.75rem;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(var(--border), 0.8);
+    box-shadow: 0 20px 40px rgba(var(--shadow), 0.08);
+  }
+
+  .hero-image {
+    margin-bottom: 1.5rem;
+  }
+
+  .hero-image img {
+    display: block;
+    width: 100%;
+    border-radius: 1.2rem;
+  }
+
+  .post-header {
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid rgba(var(--border), 0.8);
+  }
+
+  .post-meta {
+    color: rgb(var(--accent));
+    font-weight: 700;
+  }
+
+  .post-description,
+  .post-update {
+    color: rgb(var(--text-muted));
+  }
+
+  .prose {
+    max-width: 100%;
+  }
+
+  .prose ul,
+  .prose ol {
+    padding-left: 1.3rem;
+  }
+
+  .prose h2,
+  .prose h3 {
+    margin-top: 2rem;
+  }
+
+  @media (max-width: 720px) {
+    .post-layout {
+      width: min(100% - 1rem, 960px);
+      padding-top: 1rem;
+    }
+
+    .post-shell {
+      padding: 1.25rem;
+    }
+  }
+</style>

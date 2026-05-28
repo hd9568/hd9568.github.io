@@ -1,0 +1,97 @@
+---
+import { getCollection } from 'astro:content';
+import BaseHead from '../../components/BaseHead.astro';
+import Footer from '../../components/Footer.astro';
+import FormattedDate from '../../components/FormattedDate.astro';
+import Header from '../../components/Header.astro';
+import { SITE_DESCRIPTION, SITE_TITLE } from '../../consts';
+
+const posts = (await getCollection('blog')).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <BaseHead title={`文章 | ${SITE_TITLE}`} description={SITE_DESCRIPTION} />
+  </head>
+  <body>
+    <Header />
+    <main class="blog-page">
+      <section class="page-head">
+        <p class="eyebrow">Blog</p>
+        <h1>学习文章</h1>
+        <p>按主题持续更新 AI Infra、训练与推理优化相关内容，每篇都尽量讲清楚“概念、区别、常见坑、简单示例”。</p>
+      </section>
+      <section class="post-grid">
+        {posts.map((post) => (
+          <article class="post-card">
+            <p class="post-date"><FormattedDate date={post.data.pubDate} /></p>
+            <h2><a href={`/blog/${post.id}/`}>{post.data.title}</a></h2>
+            <p>{post.data.description}</p>
+            <a class="read-more" href={`/blog/${post.id}/`}>阅读全文</a>
+          </article>
+        ))}
+      </section>
+    </main>
+    <Footer />
+  </body>
+</html>
+
+<style>
+  .blog-page {
+    width: min(1120px, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 2rem 0 3rem;
+  }
+
+  .page-head {
+    max-width: 48rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .eyebrow,
+  .post-date,
+  .read-more {
+    color: rgb(var(--accent));
+    font-weight: 700;
+  }
+
+  .post-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.25rem;
+  }
+
+  .post-card {
+    padding: 1.5rem;
+    border-radius: 1.5rem;
+    border: 1px solid rgba(var(--border), 0.8);
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 18px 36px rgba(var(--shadow), 0.08);
+  }
+
+  .post-card h2 {
+    margin: 0.6rem 0;
+    font-size: 1.35rem;
+  }
+
+  .post-card h2 a {
+    color: rgb(var(--text-strong));
+    text-decoration: none;
+  }
+
+  .read-more {
+    text-decoration: none;
+  }
+
+  @media (max-width: 720px) {
+    .blog-page {
+      width: min(100% - 1rem, 1120px);
+      padding-top: 1rem;
+    }
+
+    .post-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
