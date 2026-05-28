@@ -8,7 +8,7 @@ import Header from '../components/Header.astro';
 
 type Props = CollectionEntry<'blog'>['data'];
 
-const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
+const { title, description, pubDate, updatedDate, heroImage, category = '未分类' } = Astro.props;
 ---
 
 <!doctype html>
@@ -23,7 +23,7 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
         <div class="post-header">
           <div class="meta-row">
             <span class="post-chip"><FormattedDate date={pubDate} /></span>
-            <span class="post-chip">C++ / 基础专题</span>
+            <span class="post-chip">{category}</span>
             {updatedDate && <span class="post-chip">更新于 <FormattedDate date={updatedDate} /></span>}
           </div>
           <h1>{title}</h1>

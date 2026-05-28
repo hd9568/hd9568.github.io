@@ -1,6 +1,7 @@
 ---
 title: '并发控制：Mutex、读写锁与自旋锁'
 description: '从临界区、阻塞等待和忙等三个角度理解互斥锁、读写锁、自旋锁的使用场景与性能差异。'
+category: '操作系统与多线程'
 pubDate: '2026-06-05'
 updatedDate: '2026-06-05'
 heroImage: '../../assets/blog-placeholder-1.jpg'

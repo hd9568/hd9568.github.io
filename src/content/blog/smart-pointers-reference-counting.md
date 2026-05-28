@@ -1,6 +1,7 @@
 ---
 title: '智能指针：unique_ptr、shared_ptr、weak_ptr 与引用计数'
 description: '用所有权模型理解 C++ 智能指针，讲清 unique_ptr、shared_ptr、weak_ptr 的底层思路、引用计数和循环引用问题。'
+category: 'C++'
 pubDate: '2026-05-29'
 updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'

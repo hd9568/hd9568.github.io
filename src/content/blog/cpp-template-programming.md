@@ -1,6 +1,7 @@
 ---
 title: '模板编程：特化、偏特化、SFINAE 与简单元编程'
 description: '用小例子理解 C++ 模板特化、偏特化、SFINAE 原则和编译期计算，建立面试中够用的模板编程知识框架。'
+category: 'C++'
 pubDate: '2026-06-02'
 updatedDate: '2026-06-02'
 heroImage: '../../assets/blog-placeholder-1.jpg'

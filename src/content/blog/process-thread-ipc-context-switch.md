@@ -1,6 +1,7 @@
 ---
 title: '进程与线程：IPC 方式与线程上下文切换开销'
 description: '从资源隔离、调度单位和通信成本理解进程与线程，梳理常见 IPC 方式和线程上下文切换的开销来源。'
+category: '操作系统与多线程'
 pubDate: '2026-06-04'
 updatedDate: '2026-06-04'
 heroImage: '../../assets/blog-placeholder-1.jpg'

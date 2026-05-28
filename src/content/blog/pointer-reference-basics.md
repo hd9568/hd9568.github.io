@@ -1,6 +1,7 @@
 ---
 title: '指针与引用：底层区别、悬垂指针与野指针'
 description: '从 C++ 语言语义、常见实现和对象生命周期三个角度，梳理指针、引用、悬垂指针与野指针的高频面试点。'
+category: 'C++'
 pubDate: '2026-05-28'
 updatedDate: '2026-05-28'
 heroImage: '../../assets/blog-placeholder-1.jpg'
