@@ -1,0 +1,172 @@
+src/layouts/BlogPost.astro
+  8e34aef3b03903b0 9-13,15,46-67,158-201,210-220 gitai:{"mixed_line_ranges":[],"operations":[{"operation_id":"6a180c50aab801cdb7c22dde","tool_type":"agent","tool_id":"apply_patch","line_ranges":[{"Range":[9,13]},{"Single":15},{"Range":[46,67]},{"Range":[158,201]},{"Range":[210,220]}]}]}
+src/pages/blog/[...slug].astro
+  8e34aef3b03903b0 7-12,15-23,26-31,33,37 gitai:{"mixed_line_ranges":[],"operations":[{"operation_id":"6a180c50aab801cdb7c22dde","tool_type":"agent","tool_id":"apply_patch","line_ranges":[{"Range":[7,12]},{"Range":[15,23]},{"Range":[26,31]},{"Single":33},{"Single":37}]}]}
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "61df850392fb381038a365dfc13f8f9c6fce447d",
+  "prompts": {
+    "8e34aef3b03903b0": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a17c4a5aab801cdb7c2263c",
+        "model": "gpt-5.5__dev"
+      },
+      "human_author": "霍墨墨 <2358440725@qq.com>",
+      "messages": [],
+      "total_additions": 108,
+      "total_deletions": 7,
+      "accepted_lines": 108,
+      "overriden_lines": 0
+    }
+  },
+  "attestation_metadata": {
+    "src/layouts/BlogPost.astro": [
+      {
+        "hash": "8e34aef3b03903b0",
+        "line_ranges": [
+          {
+            "Range": [
+              9,
+              13
+            ]
+          },
+          {
+            "Single": 15
+          },
+          {
+            "Range": [
+              46,
+              67
+            ]
+          },
+          {
+            "Range": [
+              158,
+              201
+            ]
+          },
+          {
+            "Range": [
+              210,
+              220
+            ]
+          }
+        ],
+        "mixed_line_ranges": [],
+        "operations": [
+          {
+            "operation_id": "6a180c50aab801cdb7c22dde",
+            "tool_type": "agent",
+            "tool_id": "apply_patch",
+            "line_ranges": [
+              {
+                "Range": [
+                  9,
+                  13
+                ]
+              },
+              {
+                "Single": 15
+              },
+              {
+                "Range": [
+                  46,
+                  67
+                ]
+              },
+              {
+                "Range": [
+                  158,
+                  201
+                ]
+              },
+              {
+                "Range": [
+                  210,
+                  220
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "src/pages/blog/[...slug].astro": [
+      {
+        "hash": "8e34aef3b03903b0",
+        "line_ranges": [
+          {
+            "Range": [
+              7,
+              12
+            ]
+          },
+          {
+            "Range": [
+              15,
+              23
+            ]
+          },
+          {
+            "Range": [
+              26,
+              31
+            ]
+          },
+          {
+            "Single": 33
+          },
+          {
+            "Single": 37
+          }
+        ],
+        "mixed_line_ranges": [],
+        "operations": [
+          {
+            "operation_id": "6a180c50aab801cdb7c22dde",
+            "tool_type": "agent",
+            "tool_id": "apply_patch",
+            "line_ranges": [
+              {
+                "Range": [
+                  7,
+                  12
+                ]
+              },
+              {
+                "Range": [
+                  15,
+                  23
+                ]
+              },
+              {
+                "Range": [
+                  26,
+                  31
+                ]
+              },
+              {
+                "Single": 33
+              },
+              {
+                "Single": 37
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "remote_transcripts": {
+    "8e34aef3b03903b0": {
+      "tool": "trae",
+      "conversation_id": "6a17c4a5aab801cdb7c2263c",
+      "session_id": "6a17c4a5aab801cdb7c2263c",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    }
+  }
+}
