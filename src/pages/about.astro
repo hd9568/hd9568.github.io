@@ -43,15 +43,16 @@ import avatar from '../assets/avatar.png';
 
   .about-card {
     display: grid;
-    grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
-    gap: 1.4rem;
+    grid-template-columns: 132px minmax(0, 1fr);
+    gap: 1.25rem;
     align-items: center;
-    padding: 1.35rem;
+    max-width: 760px;
+    padding: 1.25rem;
   }
 
   .about-avatar {
     overflow: hidden;
-    border-radius: calc(var(--radius-xl) - 8px);
+    border-radius: 1.25rem;
     aspect-ratio: 1 / 1;
     background: rgb(var(--surface-muted));
   }
@@ -85,7 +86,7 @@ import avatar from '../assets/avatar.png';
 
   @media (max-width: 820px) {
     .about-card {
-      grid-template-columns: 1fr;
+      grid-template-columns: 104px minmax(0, 1fr);
     }
   }
 
@@ -95,6 +96,7 @@ import avatar from '../assets/avatar.png';
     }
 
     .about-card {
+      grid-template-columns: 88px minmax(0, 1fr);
       padding: 1rem;
     }
 

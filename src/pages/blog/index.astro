@@ -52,13 +52,6 @@ const [featuredPost, ...restPosts] = posts;
           </article>
         ))}
 
-        {!restPosts.length && featuredPost && (
-          <article class="empty-card light-card">
-            <p class="feature-label">Next</p>
-            <h3>后续会继续补齐 `infra_list.md` 中的高频知识点。</h3>
-            <p>下一批文章会继续围绕 C++、CUDA、LLM 推理优化和分布式训练展开。</p>
-          </article>
-        )}
       </section>
     </main>
     <Footer />
@@ -95,8 +88,7 @@ const [featuredPost, ...restPosts] = posts;
   }
 
   .featured h2,
-  .post-card h3,
-  .empty-card h3 {
+  .post-card h3 {
     color: rgb(var(--text-dark));
   }
 
@@ -108,8 +100,7 @@ const [featuredPost, ...restPosts] = posts;
 
   .feature-description,
   .feature-meta,
-  .post-card p,
-  .empty-card p {
+  .post-card p {
     color: rgb(var(--text-dark-muted));
   }
 
@@ -125,8 +116,7 @@ const [featuredPost, ...restPosts] = posts;
     gap: 1.2rem;
   }
 
-  .post-card,
-  .empty-card {
+  .post-card {
     padding: 1.35rem;
   }
 
@@ -156,8 +146,7 @@ const [featuredPost, ...restPosts] = posts;
     }
 
     .featured,
-    .post-card,
-    .empty-card {
+    .post-card {
       padding: 1.2rem;
     }
   }

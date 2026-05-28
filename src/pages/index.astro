@@ -1,12 +1,10 @@
 ---
-import { Image } from 'astro:assets';
 import { getCollection } from 'astro:content';
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import FormattedDate from '../components/FormattedDate.astro';
 import { SITE_GITHUB, SITE_NAME, SITE_TITLE, SITE_DESCRIPTION } from '../consts';
-import avatar from '../assets/avatar.png';
 
 const posts = (await getCollection('blog')).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
 const latestPost = posts[0];
@@ -23,7 +21,7 @@ const topics = ['C++', 'CUDA', 'Inference', 'Training'];
     <Header />
     <main>
       <section class="hero-wrap">
-        <div class="container hero-grid">
+        <div class="container hero-shell">
           <div class="hero-copy">
             <p class="eyebrow">{SITE_NAME}</p>
             <h1>AI Infra / 训推优化学习笔记</h1>
@@ -36,12 +34,6 @@ const topics = ['C++', 'CUDA', 'Inference', 'Training'];
 
             <div class="hero-topics">
               {topics.map((topic) => <span class="kbd-like">{topic}</span>)}
-            </div>
-          </div>
-
-          <div class="avatar-card card">
-            <div class="avatar-frame">
-              <Image src={avatar} alt="霍墨墨头像" width={720} height={720} />
             </div>
           </div>
         </div>
@@ -83,24 +75,48 @@ const topics = ['C++', 'CUDA', 'Inference', 'Training'];
 
 <style>
   .hero-wrap {
-    padding: 1.5rem 0 3rem;
+    padding: 1.4rem 0 1.3rem;
   }
 
-  .hero-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
-    gap: 1rem;
-    align-items: center;
+  .hero-shell {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 2rem;
+    background:
+      radial-gradient(circle at 78% 18%, rgba(var(--accent-soft), 0.24), transparent 18rem),
+      linear-gradient(135deg, rgb(var(--bg)), rgb(var(--bg-soft)));
+    box-shadow: var(--card-shadow);
   }
 
   .hero-copy {
+    position: relative;
+    z-index: 1;
     min-width: 0;
-    padding: 2rem 0 1.5rem;
+    max-width: 720px;
+    padding: clamp(2rem, 7vw, 5rem);
+    animation: fade-up 0.5s ease both;
+  }
+
+  .hero-shell::after {
+    content: '';
+    position: absolute;
+    inset: auto -12% -36% 42%;
+    height: 70%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, rgba(var(--accent), 0.2), transparent);
+    filter: blur(24px);
+    transform: rotate(-8deg);
+  }
+
+  .hero-copy h1 {
+    color: rgb(245, 247, 250);
   }
 
   .hero-subtitle {
     max-width: 32rem;
     font-size: 1.08rem;
+    color: rgb(209, 215, 224);
   }
 
   .hero-actions,
@@ -118,31 +134,18 @@ const topics = ['C++', 'CUDA', 'Inference', 'Training'];
     margin-top: 1rem;
   }
 
-  .avatar-card {
-    width: 100%;
-    max-width: 280px;
-    justify-self: end;
-    padding: 0.75rem;
-  }
-
-  .avatar-frame {
-    overflow: hidden;
-    border-radius: calc(var(--radius-xl) - 6px);
-    aspect-ratio: 1 / 1;
-    background: rgba(255, 255, 255, 0.04);
-  }
-
-  .avatar-frame img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+  .hero-shell .button.secondary,
+  .hero-shell .kbd-like {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: rgb(245, 247, 250);
   }
 
   .content-grid {
     display: grid;
     grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
     gap: 1.2rem;
-    padding-bottom: 2.5rem;
+    padding: 1.2rem 0 2.5rem;
   }
 
   .latest-card,
@@ -192,6 +195,12 @@ const topics = ['C++', 'CUDA', 'Inference', 'Training'];
     border-radius: 1rem;
     background: rgb(var(--surface-muted));
     text-decoration: none;
+    transition: transform 0.2s ease, background 0.2s ease;
+  }
+
+  .archive-item:hover {
+    transform: translateX(4px);
+    background: rgba(var(--accent-soft), 0.08);
   }
 
   .archive-date {
@@ -199,45 +208,45 @@ const topics = ['C++', 'CUDA', 'Inference', 'Training'];
   }
 
   @media (max-width: 900px) {
-    .hero-grid,
     .content-grid {
       grid-template-columns: 1fr;
-    }
-
-    .avatar-card {
-      max-width: 220px;
-      justify-self: start;
     }
   }
 
   @media (max-width: 720px) {
     .hero-wrap {
       padding-top: 1rem;
-      padding-bottom: 2rem;
+      padding-bottom: 1rem;
     }
 
     .hero-copy {
-      padding-top: 1.2rem;
+      padding: 1.4rem;
     }
 
     .hero-actions .button {
       width: 100%;
     }
 
-    .avatar-card,
     .latest-card,
     .archive-card {
       padding: 1rem;
-    }
-
-    .avatar-card {
-      max-width: 180px;
     }
 
     .latest-head,
     .archive-head {
       align-items: flex-start;
       flex-direction: column;
+    }
+  }
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 </style>
