@@ -5,10 +5,17 @@ import { SITE_EMAIL, SITE_GITHUB, SITE_NAME } from '../consts';
 
 <footer class="site-footer">
   <div class="container footer-shell">
-    <span>{SITE_NAME} © {year}</span>
-    <div class="footer-links">
-      <a href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub</a>
-      <a href={`mailto:${SITE_EMAIL}`}>{SITE_EMAIL}</a>
+    <div class="footer-main">
+      <div class="footer-row">
+        <span>{SITE_NAME} © {year}</span>
+        <div class="footer-links">
+          <a href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub</a>
+          <a href={`mailto:${SITE_EMAIL}`}>{SITE_EMAIL}</a>
+        </div>
+      </div>
+      <p class="ai-disclaimer">
+        本网站由 Trae 与 GPT-5.5 模型辅助自动搭建；文章内容包含 AI 生成、人工整理与持续校订，仅作为个人学习笔记。
+      </p>
     </div>
   </div>
 </footer>
@@ -19,19 +26,36 @@ import { SITE_EMAIL, SITE_GITHUB, SITE_NAME } from '../consts';
   }
 
   .footer-shell {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
     padding-top: 1.25rem;
     border-top: 1px solid rgba(15, 23, 42, 0.08);
   }
 
-  .footer-shell,
+  .footer-main {
+    width: 100%;
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .footer-row,
   .footer-links a {
     color: rgb(var(--text-dark-muted));
     font-size: 0.94rem;
     text-decoration: none;
+  }
+
+  .ai-disclaimer {
+    max-width: 880px;
+    margin: 0;
+    color: rgb(var(--text-dark-muted));
+    font-size: 0.82rem;
+    line-height: 1.7;
   }
 
   .footer-links {
@@ -41,7 +65,7 @@ import { SITE_EMAIL, SITE_GITHUB, SITE_NAME } from '../consts';
   }
 
   @media (max-width: 720px) {
-    .footer-shell {
+    .footer-row {
       flex-direction: column;
       align-items: flex-start;
     }
