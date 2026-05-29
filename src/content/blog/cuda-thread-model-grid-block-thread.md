@@ -2,8 +2,8 @@
 title: 'CUDA 线程模型：Grid、Block、Thread 与 Global Thread ID'
 description: '用一维、二维、三维映射理解 CUDA Grid、Block、Thread 的组织方式，并讲清 Global Thread ID 的计算方法。'
 category: 'CUDA'
-pubDate: '2026-06-10'
-updatedDate: '2026-06-10'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

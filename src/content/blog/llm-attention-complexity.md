@@ -2,8 +2,8 @@
 title: '标准 Attention 的复杂度：为什么长上下文会迅速变慢'
 description: '从 Q、K、V 的矩阵形状出发，推导标准 Attention 的时间复杂度和显存复杂度，理解长上下文推理的根本瓶颈。'
 category: '推理优化'
-pubDate: '2026-06-25'
-updatedDate: '2026-06-25'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

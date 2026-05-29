@@ -2,8 +2,8 @@
 title: 'CUDA 循环展开：#pragma unroll 的原理与取舍'
 description: '理解循环展开如何减少分支和索引开销，分析 #pragma unroll 在 CUDA kernel 中对指令数、寄存器和性能的影响。'
 category: 'CUDA'
-pubDate: '2026-06-17'
-updatedDate: '2026-06-17'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

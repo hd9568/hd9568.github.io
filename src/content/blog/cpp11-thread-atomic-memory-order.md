@@ -2,8 +2,8 @@
 title: 'C++11 并发：std::thread、std::atomic 与内存序'
 description: '用简单示例理解 C++11 std::thread、std::atomic，以及 Relaxed、Acquire-Release、Sequential Consistency 三类基础内存序。'
 category: '操作系统与多线程'
-pubDate: '2026-06-08'
-updatedDate: '2026-06-08'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

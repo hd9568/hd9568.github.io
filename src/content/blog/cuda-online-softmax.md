@@ -2,8 +2,8 @@
 title: '手写 CUDA Softmax：Online Softmax 与数值稳定性'
 description: '从数值稳定 Softmax 写法出发，理解 Online Softmax 如何减少访存，并给出单行 Softmax kernel 的清晰实现思路。'
 category: 'CUDA'
-pubDate: '2026-06-23'
-updatedDate: '2026-06-23'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

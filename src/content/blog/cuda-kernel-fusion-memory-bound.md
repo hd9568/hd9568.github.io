@@ -2,8 +2,8 @@
 title: 'CUDA Kernel Fusion：为什么融合能减少显存带宽瓶颈'
 description: '从 Memory-bound 和 Compute-bound 角度理解 Kernel Fusion，讲清融合如何减少中间结果读写以及可能带来的副作用。'
 category: 'CUDA'
-pubDate: '2026-06-18'
-updatedDate: '2026-06-18'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

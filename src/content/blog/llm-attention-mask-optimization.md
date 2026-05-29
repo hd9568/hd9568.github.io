@@ -2,8 +2,8 @@
 title: 'Attention Mask 优化：Causal、Paged 与 Block Sparse Mask'
 description: '梳理推理场景中常见 Attention Mask 的类型，解释它们在 kernel 内的实现成本，以及如何避免 mask 处理成为额外瓶颈。'
 category: '推理优化'
-pubDate: '2026-07-01'
-updatedDate: '2026-07-01'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

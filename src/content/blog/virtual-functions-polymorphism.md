@@ -2,8 +2,8 @@
 title: '虚函数与多态：vptr、vtbl、纯虚函数与动态绑定'
 description: '从对象内存布局和调用过程理解 C++ 虚函数、多态、虚函数表、纯虚函数、动态绑定与静态绑定。'
 category: 'C++'
-pubDate: '2026-06-01'
-updatedDate: '2026-06-01'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

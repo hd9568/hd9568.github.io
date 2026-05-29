@@ -2,8 +2,8 @@
 title: 'CUDA Registers：寄存器使用、Spilling 与 Local Memory'
 description: '理解寄存器为什么影响 Occupancy，讲清 Register Spilling 如何把变量溢出到 Local Memory 并拖慢 kernel。'
 category: 'CUDA'
-pubDate: '2026-06-14'
-updatedDate: '2026-06-14'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

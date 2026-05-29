@@ -2,8 +2,8 @@
 title: 'STL 容器底层：vector、unordered_map 与 map'
 description: '从扩容、哈希冲突、负载因子和红黑树角度理解 std::vector、std::unordered_map、std::map 的底层机制和面试重点。'
 category: 'C++'
-pubDate: '2026-06-03'
-updatedDate: '2026-06-03'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

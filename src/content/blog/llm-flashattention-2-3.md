@@ -2,8 +2,8 @@
 title: 'FlashAttention-2 / 3：减少非矩阵乘开销与提升 Tensor Core 利用率'
 description: '解释 FlashAttention-2 和 FlashAttention-3 相比 FlashAttention-1 的优化方向：更好的并行划分、更少 non-matmul 开销和更高硬件利用率。'
 category: '推理优化'
-pubDate: '2026-06-28'
-updatedDate: '2026-06-28'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

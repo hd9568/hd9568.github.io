@@ -2,8 +2,8 @@
 title: 'PagedAttention：用分页思想管理 KV Cache'
 description: '从 KV Cache 的动态增长和内存碎片问题出发，解释 PagedAttention 的逻辑块、物理块、Block Table 与 OS 虚拟内存类比。'
 category: '推理优化'
-pubDate: '2026-06-30'
-updatedDate: '2026-06-30'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

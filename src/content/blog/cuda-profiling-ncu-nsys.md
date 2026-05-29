@@ -2,8 +2,8 @@
 title: 'CUDA Profiling：Nsight Compute 与 Nsight Systems 常用指标'
 description: '区分 NCU 和 NSYS 的定位，理解 Occupancy、Compute Workload、Memory Bandwidth 等常用指标如何指导 CUDA 优化。'
 category: 'CUDA'
-pubDate: '2026-06-19'
-updatedDate: '2026-06-19'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

@@ -2,8 +2,8 @@
 title: 'CUDA Warp 机制：分支分化、Active Mask 与 Warp 级原语'
 description: '理解 Warp Divergence 的原因与代价，掌握 Active Mask 和 __shfl_sync 等 Warp 级原语的基本用法。'
 category: 'CUDA'
-pubDate: '2026-06-11'
-updatedDate: '2026-06-11'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

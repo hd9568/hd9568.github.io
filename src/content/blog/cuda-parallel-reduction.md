@@ -2,8 +2,8 @@
 title: '手写 CUDA Parallel Reduction：从交错寻址到 Warp 级规约'
 description: '系统拆解 CUDA 并行规约，从朴素交错寻址、连续寻址、Shared Memory 到 Warp Shuffle 和循环展开。'
 category: 'CUDA'
-pubDate: '2026-06-21'
-updatedDate: '2026-06-21'
+pubDate: '2026-05-29'
+updatedDate: '2026-05-29'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 
