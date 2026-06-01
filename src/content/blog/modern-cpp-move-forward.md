@@ -2,8 +2,8 @@
 title: '现代 C++：右值引用、移动语义与完美转发'
 description: '用资源转移的视角理解右值引用、std::move 和 std::forward，讲清现代 C++ 中减少拷贝和保持值类别的关键机制。'
 category: 'C++'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T09:30:00+08:00'
+updatedDate: '2026-05-29T09:30:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

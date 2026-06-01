@@ -2,8 +2,8 @@
 title: '内存层级：Cache Line、伪共享与性能优化'
 description: '从 CPU Cache 和 Cache Line 出发，理解内存层级、局部性、伪共享问题，以及多线程程序中如何减少缓存争用。'
 category: '操作系统与多线程'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T10:40:00+08:00'
+updatedDate: '2026-05-29T10:40:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

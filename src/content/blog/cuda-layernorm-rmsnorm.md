@@ -2,8 +2,8 @@
 title: '手写 CUDA LayerNorm / RMSNorm：均值与方差的高效计算'
 description: '从归一化公式出发，理解 LayerNorm 和 RMSNorm 的区别，并用单 Block 单行的 CUDA kernel 讲清均值、方差与规约实现。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T13:30:00+08:00'
+updatedDate: '2026-05-29T13:30:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

@@ -2,8 +2,8 @@
 title: '手写 CUDA GEMM：朴素版、Shared Memory Tiling 与 Bank Conflict'
 description: '从朴素矩阵乘法写起，逐步引入 Shared Memory Tiling，理解 GEMM 为什么需要数据复用以及如何处理 Bank Conflict。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T13:10:00+08:00'
+updatedDate: '2026-05-29T13:10:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

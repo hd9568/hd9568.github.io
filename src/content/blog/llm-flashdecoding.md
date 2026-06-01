@@ -2,8 +2,8 @@
 title: 'FlashDecoding：长上下文 Decode 阶段的并行化思路'
 description: '解释为什么 Decode 阶段在长上下文下容易变成 Memory-bound，以及 FlashDecoding 如何把单请求 KV 读取拆分到多个 block 并行。'
 category: '推理优化'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T14:20:00+08:00'
+updatedDate: '2026-05-29T14:20:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

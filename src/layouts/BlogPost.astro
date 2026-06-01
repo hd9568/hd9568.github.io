@@ -13,6 +13,7 @@ type Props = CollectionEntry<'blog'>['data'] & {
 };
 
 const { title, description, pubDate, updatedDate, heroImage, category = '未分类', previousPost, nextPost } = Astro.props;
+const showUpdatedDate = updatedDate && updatedDate.valueOf() !== pubDate.valueOf();
 ---
 
 <!doctype html>
@@ -26,9 +27,9 @@ const { title, description, pubDate, updatedDate, heroImage, category = '未分�
       <article class="post-shell light-card">
         <div class="post-header">
           <div class="meta-row">
-            <span class="post-chip"><FormattedDate date={pubDate} /></span>
+            <span class="post-chip">创建于 <FormattedDate date={pubDate} format="datetime" /></span>
             <span class="post-chip">{category}</span>
-            {updatedDate && <span class="post-chip">更新于 <FormattedDate date={updatedDate} /></span>}
+            {showUpdatedDate && <span class="post-chip">更新于 <FormattedDate date={updatedDate!} format="datetime" /></span>}
           </div>
           <h1>{title}</h1>
           <p class="post-description">{description}</p>

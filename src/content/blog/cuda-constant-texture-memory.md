@@ -2,8 +2,8 @@
 title: 'CUDA Constant Memory 与 Texture Memory：只读数据的访存选择'
 description: '理解 Constant Memory 和 Texture Memory 的适用场景，掌握只读广播数据、空间局部性数据的访存优化思路。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T12:00:00+08:00'
+updatedDate: '2026-05-29T12:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

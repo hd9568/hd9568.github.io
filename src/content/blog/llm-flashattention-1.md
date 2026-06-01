@@ -2,8 +2,8 @@
 title: 'FlashAttention-1：Tiling、SRAM/HBM 与 Online Softmax'
 description: '从标准 Attention 的 HBM 读写瓶颈出发，解释 FlashAttention-1 如何通过分块、片上 SRAM 和 Online Softmax 避免保存完整注意力矩阵。'
 category: '推理优化'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T14:00:00+08:00'
+updatedDate: '2026-05-29T14:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

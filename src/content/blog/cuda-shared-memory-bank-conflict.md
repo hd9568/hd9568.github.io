@@ -2,8 +2,8 @@
 title: 'CUDA Shared Memory：Bank Conflict、Padding 与 Swizzle'
 description: '理解 Shared Memory 的 Bank 组织方式，讲清 Bank Conflict 的产生原因，以及 Padding 和 Swizzle 的解决思路。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T11:40:00+08:00'
+updatedDate: '2026-05-29T11:40:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

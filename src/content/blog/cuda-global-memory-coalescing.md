@@ -2,8 +2,8 @@
 title: 'CUDA Global Memory：合并访问、对齐与带宽优化'
 description: '理解 Global Memory 的高延迟特性，讲清 Coalesced Memory Access、对齐要求和常见访存优化写法。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T11:30:00+08:00'
+updatedDate: '2026-05-29T11:30:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

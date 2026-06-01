@@ -2,8 +2,8 @@
 title: 'Causal Attention：自回归推理中的 Mask 机制'
 description: '解释 Causal Mask 为什么存在，如何保证 Decode 阶段只能看历史 token，并用简洁代码展示 mask 的构造方式。'
 category: '推理优化'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T13:50:00+08:00'
+updatedDate: '2026-05-29T13:50:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

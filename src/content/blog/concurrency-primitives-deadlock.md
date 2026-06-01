@@ -2,8 +2,8 @@
 title: '并发原语：条件变量、信号量与死锁'
 description: '用生产者消费者模型理解条件变量和信号量，梳理死锁的四个必要条件与常见预防方法。'
 category: '操作系统与多线程'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T10:30:00+08:00'
+updatedDate: '2026-05-29T10:30:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

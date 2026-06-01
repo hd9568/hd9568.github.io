@@ -12,7 +12,9 @@ const fallbackCategory = '未分类';
 const groupedPosts = categoryOrder
   .map((category) => ({
     category,
-    posts: posts.filter((post) => (post.data.category ?? fallbackCategory) === category),
+    posts: posts
+      .filter((post) => (post.data.category ?? fallbackCategory) === category)
+      .sort((a, b) => a.data.pubDate.valueOf() - b.data.pubDate.valueOf()),
   }))
   .filter((group) => group.posts.length > 0);
 const uncategorizedPosts = posts.filter((post) => !categoryOrder.includes(post.data.category ?? fallbackCategory));

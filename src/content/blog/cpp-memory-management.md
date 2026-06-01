@@ -2,8 +2,8 @@
 title: '内存管理：new/delete、malloc/free、内存泄漏排查与内存池'
 description: '从 C++ 对象生命周期出发，讲清 new/delete 与 malloc/free 的区别，理解内存泄漏排查和内存池设计思想。'
 category: 'C++'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T09:20:00+08:00'
+updatedDate: '2026-05-29T09:20:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

@@ -2,8 +2,8 @@
 title: 'CUDA 硬件架构：SM、Warp、CUDA Core 与 Tensor Core'
 description: '从 GPU 执行单元出发，理解 SM、Warp、CUDA Core、Tensor Core 的关系，以及它们为什么决定 CUDA kernel 的性能上限。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T11:00:00+08:00'
+updatedDate: '2026-05-29T11:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

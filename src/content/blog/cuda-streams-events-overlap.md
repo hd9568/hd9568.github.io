@@ -2,8 +2,8 @@
 title: 'CUDA Streams：异步执行、Event 同步与计算传输重叠'
 description: '理解 CUDA Stream 的异步执行模型，掌握 Event 同步、cudaMemcpyAsync 和 Ping-Pong Buffer 实现计算与数据传输重叠。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T12:10:00+08:00'
+updatedDate: '2026-05-29T12:10:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 

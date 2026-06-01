@@ -2,8 +2,8 @@
 title: '手写 CUDA Vector Add 与 Vector Dot Product'
 description: '从最基础的向量加法开始，逐步写出 Dot Product 的并行规约版本，理解线程映射、边界检查和块级归约。'
 category: 'CUDA'
-pubDate: '2026-05-29'
-updatedDate: '2026-05-29'
+pubDate: '2026-05-29T12:50:00+08:00'
+updatedDate: '2026-05-29T12:50:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 
