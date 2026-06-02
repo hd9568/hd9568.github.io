@@ -7,7 +7,7 @@ import Header from '../../components/Header.astro';
 import { SITE_DESCRIPTION, SITE_TITLE } from '../../consts';
 
 const posts = (await getCollection('blog')).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
-const categoryOrder = ['C++', '操作系统与多线程', 'CUDA', '推理优化'];
+const categoryOrder = ['C++', '操作系统与多线程', 'CUDA', '推理优化', 'Research & Work'];
 const fallbackCategory = '未分类';
 const groupedPosts = categoryOrder
   .map((category) => ({
