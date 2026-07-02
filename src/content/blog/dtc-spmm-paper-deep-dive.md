@@ -196,6 +196,8 @@ Tensor Core 需要 dense tile，例如 `16 x 8` 的稀疏 A tile 和 dense B til
 
 论文 Figure 1 展示了 Sparse Graph Translation 和 TCF format。TC-GNN 的 TCF 需要五个数组：
 
+![Figure 1：Sparse Graph Translation 与 TCF format](../../assets/dtc-spmm/figure-01-sgt-tcf.png)
+
 - `blockpartition`：每个 row window 有多少 TC block。
 - `nodePointer`：类似 CSR 的 row offset。
 - `edgeList`：非零元素的原始列号。
@@ -203,6 +205,8 @@ Tensor Core 需要 dense tile，例如 `16 x 8` 的稀疏 A tile 和 dense B til
 - `edgeToRow`：非零元素的行号。
 
 论文 Figure 2 展示 TC-GNN SpMM 的流程：
+
+![Figure 2：TCGNN-SpMM 设计总览](../../assets/dtc-spmm/figure-02-tcgnn-overview.png)
 
 1. 一个 thread block 负责一个 output row window。
 2. 每次迭代处理该 row window 中的一个 TC block。
@@ -263,6 +267,8 @@ wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
 
 Table 1 给出 8 个代表矩阵，分成 Type I 和 Type II：
 
+![Table 1：8 个代表矩阵](../../assets/dtc-spmm/table-01-datasets.png)
+
 | Type | Name | Abbr. | M & K | NNZ | AvgRowL |
 | --- | --- | --- | --- | --- | --- |
 | I | YeastH | YH | 3,138,114 | 6,487,230 | 2.07 |
@@ -317,6 +323,8 @@ Table 2 显示 TC-GNN 使用 SGT 后多数矩阵 `MeanNnzTC < 16`。这意味着
 
 Table 2 中的关键指标：
 
+![Table 2：TCGNN-SpMM 的关键性能指标](../../assets/dtc-spmm/table-02-tcgnn-indicators.png)
+
 | Dataset | MeanNnzTC | #IMAD/#HMMA | TC Pipeline Utilization |
 | --- | ---: | ---: | ---: |
 | YH | 9.79 | 13.72 | 4.19% |
@@ -344,6 +352,8 @@ CUDA-core SpMM 中，任务常按行或非零元素划分。Tensor Core SpMM 中
 
 论文 Figure 3 对 RTX4090 的 128 个 SM 统计执行/空闲时间：
 
+![Figure 3：RTX4090 上 128 个 SM 的执行和空闲时间](../../assets/dtc-spmm/figure-03-sm-load-imbalance.png)
+
 - YeastH 的负载不均衡较轻。
 - ddi 的负载不均衡明显，很多 SM 空闲。
 
@@ -352,6 +362,8 @@ CUDA-core SpMM 中，任务常按行或非零元素划分。Tensor Core SpMM 中
 ## 六、DTC-SpMM 总体设计
 
 论文 Figure 4 给出 DTC-SpMM 的整体流程。它不是单个 kernel，而是一套从预处理到运行时的系统优化：
+
+![Figure 4：DTC-SpMM 设计总览](../../assets/dtc-spmm/figure-04-dtc-overview.png)
 
 1. `TCU-Cache-Aware reordering`：离线重排序，提高 TC block 密度和 L2 cache locality。
 2. `Format conversion`：把矩阵转成更省内存的 ME-TCF。
@@ -374,6 +386,8 @@ CUDA-core SpMM 中，任务常按行或非零元素划分。Tensor Core SpMM 中
 论文第 4.2 节提出 `ME-TCF`，Memory-efficient TCF。它仍然基于 SGT 压缩后的 sparse matrix，但减少了数组数量和索引位宽。
 
 ME-TCF 用四个数组：
+
+![Figure 5：Memory-efficient TCF 格式](../../assets/dtc-spmm/figure-05-me-tcf.png)
 
 ### RowWindowOffset
 
@@ -512,6 +526,8 @@ Hierarchy I: TCU-Aware
 Hierarchy II: Cache-Aware
 ```
 
+![Figure 6：TCU-Cache-Aware reordering 两级重排序](../../assets/dtc-spmm/figure-06-tca-reordering.png)
+
 ### Hierarchy I：TCU-Aware
 
 目标：把非零列集合相似的行聚成不超过 16 行的 row cluster。
@@ -526,6 +542,8 @@ DTC-SpMM 的 TC block 高度是 16。
 如果把相似行放在同一个 row window，它们更可能共享 B 的列，压缩后 TC block 更密，`MeanNnzTC` 更高。
 
 论文 Algorithm 1 的步骤是：
+
+![Algorithm 1：TCU-Cache-Aware reordering](../../assets/dtc-spmm/algorithm-01-tca-reordering.png)
 
 1. 用 Minhash LSH 找 Jaccard 相似度较高的行对。
 2. 把候选行对放进 priority queue。
@@ -641,6 +659,8 @@ np.savez(... dataset + ".reorder.npz", src_li=new_row_ind, dst_li=new_col_ind, n
 
 论文 Algorithm 2 的伪代码可概括为：
 
+![Algorithm 2：DTC-SpMM runtime kernel 伪代码](../../assets/dtc-spmm/algorithm-02-runtime-kernel.png)
+
 ```cpp
 RowWindowId = blockIdx.x;
 Start = A.RowWindowOffset[RowWindowId];
@@ -682,6 +702,8 @@ global memory -> register fragment -> Tensor Core
 
 论文 Figure 7 对比了 TC-GNN 和 DTC-SpMM 的 instruction pipeline 和 data movement：
 
+![Figure 7：TCGNN-SpMM 与 DTC-SpMM 的指令流水和数据移动](../../assets/dtc-spmm/figure-07-pipeline-bypass.png)
+
 - TC-GNN 使用 C-level WMMA，B 先写 shared memory。
 - DTC-SpMM 使用 PTX-level `mma`，B 直接进入寄存器。
 
@@ -717,6 +739,8 @@ asm volatile(
 ### VFetchDense：strided access vs sequential access
 
 论文 Figure 8 讨论 B 的寄存器分布问题。
+
+![Figure 8：mma 寄存器分布、B 的加载方式与 register remapping](../../assets/dtc-spmm/figure-08-register-remapping.png)
 
 背景是：
 
@@ -792,6 +816,8 @@ DTC-SpMM 转而预取 sparse A tile：
 这就是 `sparse double buffering`。
 
 论文 Figure 9 画的是两个 shared memory buffer：
+
+![Figure 9：Sparse double buffering 流水安排](../../assets/dtc-spmm/figure-09-sparse-double-buffering.png)
 
 ```text
 ATile[0], AtoBTile[0]
@@ -879,6 +905,8 @@ sparse_AToX_index[tid] = sparse_AToX_idx[eIdx] * embedding_dim;
 ### balanced runtime kernel
 
 普通 DTC-SpMM 的分配方式是：
+
+![Figure 10：strict-balance 策略、TB 调度模型与 makespan 计算](../../assets/dtc-spmm/figure-10-selector-balance.png)
 
 ```text
 一个 thread block 负责一个 row window。
@@ -1030,9 +1058,13 @@ m.def("forward_cusparse_bell", &spmm_forward_cusparse_blocked_ellpack_impl, ...)
 
 Figure 11(a) 显示 RTX4090 上 8 个代表矩阵的 speedup，归一化到 cuSPARSE-SpMM。DTC-SpMM 在所有 8 个矩阵上最高，Type II 矩阵上相对加速更明显，最高到 `3.29x`。
 
+![Figure 11：RTX4090 上的整体性能对比](../../assets/dtc-spmm/figure-11-overall-performance.png)
+
 论文解释：TCGNN-SpMM 对 Type I 短行矩阵优化较好，但在 Type II 长行矩阵上不能取得加速。
 
 Table 3 总结 414 个 SuiteSparse 矩阵上的分布。
+
+![Table 3：RTX4090 与 RTX3090 上的整体性能对比](../../assets/dtc-spmm/table-03-performance-summary.png)
 
 RTX4090：
 
@@ -1058,6 +1090,8 @@ RTX3090：
 
 Figure 12 比较 Block-SpMM 和 VectorSparse。
 
+![Figure 12：DTC-SpMM 相比 Block-SpMM 与 VectorSparse 的加速比](../../assets/dtc-spmm/figure-12-structured-spmm.png)
+
 论文把矩阵转换成：
 
 - BELL format，block size 为 32 和 64。
@@ -1070,6 +1104,8 @@ Block-SpMM 的问题是 BELL 需要 padding/fill 所有 block rows，大规模�
 ### 与 Flash-LLM 和 SparTA 比较
 
 Table 4 给出 `N=128` 时的执行时间：
+
+![Table 4：Flash-LLM、SparTA 与 DTC-SpMM 执行时间对比](../../assets/dtc-spmm/table-04-flashllm-sparta.png)
 
 | Dataset | Flash-LLM v1 | Flash-LLM v2 | SparTA | DTC-SpMM |
 | --- | ---: | ---: | ---: | ---: |
@@ -1097,6 +1133,8 @@ ddi 很小，SparTA/Flash-LLM 有竞争力。但在 protein/reddit 这种大规�
 
 TCA 后 DTC-SpMM 平均性能提升 `23.23%`。
 
+![Figure 13：MeanNnzTC、吞吐提升与 L2 cache hit rate 对比](../../assets/dtc-spmm/figure-13-breakdown-reordering.png)
+
 相比 SGT：
 
 - Type I 的 `MeanNnzTC` 提升 `1.13x`。
@@ -1112,6 +1150,8 @@ TCA 后 DTC-SpMM 平均性能提升 `23.23%`。
 ### runtime kernel optimizations 有效性
 
 Figure 14 分析 TC pipeline utilization 和 `#IMAD/#HMMA`。
+
+![Figure 14：runtime kernel 优化对 TC pipeline utilization 和指令比例的影响](../../assets/dtc-spmm/figure-14-runtime-ablation.png)
 
 相比 TCGNN-SpMM：
 
@@ -1131,6 +1171,8 @@ Figure 14 分析 TC pipeline utilization 和 `#IMAD/#HMMA`。
 ### workload balance 有效性
 
 Figure 15 比较 reddit 和 ddi。
+
+![Figure 15：workload balancing 的吞吐提升与 SM 负载分布变化](../../assets/dtc-spmm/figure-15-workload-balance.png)
 
 启用 strict-balance 后：
 
@@ -1186,6 +1228,8 @@ SparseTensor 会调用 `torch-sparse` 中的 SpMM kernel，通常内存更省、
 ```
 
 Figure 16 结果：
+
+![Figure 16：GCN 端到端训练时间](../../assets/dtc-spmm/figure-16-gcn-training.png)
 
 RTX4090 上，DTC-GCN 几何平均加速：
 
