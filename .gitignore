@@ -23,6 +23,7 @@ image.png
 
 # local reference repositories
 inference-framework
+paper
 
 # jetbrains setting folder
 .idea/
