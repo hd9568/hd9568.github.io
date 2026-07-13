@@ -24,6 +24,8 @@ image.png
 # local reference repositories
 inference-framework
 paper
+resume
 
 # jetbrains setting folder
 .idea/
+
