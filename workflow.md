@@ -53,7 +53,7 @@ npm create astro@latest temp-blog -- --template blog --install --git=false --yes
 执行命令：
 
 ```bash
-rsync -a --exclude node_modules --exclude .git /Users/bytedance/Desktop/blog/temp-blog/ /Users/bytedance/Desktop/blog/
+rsync -a --exclude node_modules --exclude .git ./temp-blog/ ./
 ```
 
 这样可以：

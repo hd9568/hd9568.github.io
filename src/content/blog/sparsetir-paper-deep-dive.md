@@ -67,17 +67,7 @@ SparseTIR 的核心回答是：
 - GraphSAGE 端到端训练：`1.08-1.52x` 加速。
 - RGCN inference：`4.20-40.18x` 加速。
 
-本地资料包含两部分：
-
-```text
-paper/SparseTir/arXiv-2207.04606v4/
-  论文 LaTeX 源码、figures、appendix、代码片段
-
-paper/SparseTir/SparseTIR-main/
-  基于 TVM 的 SparseTIR 开源项目代码
-```
-
-从代码看，这不是只有论文概念的系统。SparseTIR 在 TVM 中扩展了：
+SparseTIR 不只是论文概念，开源实现基于 TVM，并扩展了：
 
 - sparse IR node
 - sparse schedule primitive
@@ -305,7 +295,7 @@ fixed / variable
 | sparse fixed | 非连续但每个 parent 下非零数固定 | ELL 每行固定 nnz_cols |
 | sparse variable | 非连续且每个 parent 下非零数可变 | CSR 每行非零数不同 |
 
-项目代码中对应 `python/tvm/tir/sparse.py`：
+`sparse.py` 中对应定义为：
 
 ```python
 class AxisKind(Enum):
@@ -364,7 +354,7 @@ class SparseBuffer(Buffer):
     default_value: Optional[PrimExpr]
 ```
 
-C++ 侧 `src/tir/ir/sparse.cc` 会根据 axes 推导 flattened buffer 的 nnz：
+C++ 侧 `sparse.cc` 会根据 axes 推导 flattened buffer 的 nnz：
 
 ```cpp
 PrimExpr nnz = Integer(1);
@@ -481,7 +471,7 @@ A[I] = A'[f(I)]
 A[f^{-1}(I')] = A'[I']
 ```
 
-本地论文代码 `code/format_decompose.py` 里有示例：
+`format_decompose.py` 中有对应示例：
 
 ```python
 return FormatRewriteRule(
@@ -499,13 +489,13 @@ return FormatRewriteRule(
 
 这就是把原始 `(i,j)` 映射到 BSR 的 `(block_i, block_j, inner_i, inner_j)`。
 
-源码中对应 `src/tir/transforms/sparse_format_decompose.cc`：
+`sparse_format_decompose.cc` 中对应实现包括：
 
 - `IndexRewriter` 保存 index map 和 inverse map。
 - `SparseFormatDecomposer` 根据 rewrite rule 生成新 buffer、format rewrite block 和 compute block。
 - `SparseFormatDecompose` pass 暴露到 Python。
 
-Python API 在 `python/tvm/tir/transform/transform.py`：
+Python API 在 `transform.py` 中暴露：
 
 ```python
 def SparseFormatDecompose(composable_formats, include_format_rewrite_blks=True):
@@ -784,28 +774,23 @@ body = IfThenElse(
 
 ## 十五、项目源码如何落地论文设计
 
-SparseTIR 的开源项目基于 TVM。核心代码分布如下：
+SparseTIR 的开源项目基于 TVM，核心实现文件包括：
 
 ```text
-SparseTIR-main/
-├── python/tvm/tir/sparse.py
-├── src/tir/ir/sparse.cc
-├── src/tir/schedule/primitive/sparse.cc
-├── src/tir/transforms/lower_sparse_iter.cc
-├── src/tir/transforms/lower_sparse_buffer.cc
-├── src/tir/transforms/sparse_format_decompose.cc
-├── src/tir/transforms/horizontal_fusion.cc
-├── src/sparse/format.cc
-└── examples/
-    ├── spmm/
-    ├── sddmm/
-    ├── blocksparse/
-    └── rgms/
+sparse.py
+sparse.cc
+lower_sparse_iter.cc
+lower_sparse_buffer.cc
+sparse_format_decompose.cc
+horizontal_fusion.cc
+format.cc
+bench_spmm.py
+bench_sddmm.py
 ```
 
 ### Python sparse API
 
-`python/tvm/tir/sparse.py` 定义：
+`sparse.py` 定义：
 
 - `Axis`
 - `FusedAxis`
@@ -818,7 +803,7 @@ SparseTIR-main/
 
 ### C++ sparse IR
 
-`src/tir/ir/sparse.cc` 注册 C++ IR node：
+负责稀疏 IR 的 `sparse.cc` 注册 C++ IR node：
 
 - `AxisNode`
 - `FusedAxisNode`
@@ -836,7 +821,7 @@ TVM_REGISTER_GLOBAL("tir.sparse.FlattenedAxis")
 
 ### Sparse schedule primitive
 
-`src/tir/schedule/primitive/sparse.cc` 实现：
+负责 schedule primitive 的 `sparse.cc` 实现：
 
 - `SparseReorder`
 - `SparseFuse`
@@ -845,7 +830,7 @@ TVM_REGISTER_GLOBAL("tir.sparse.FlattenedAxis")
 
 ### Format conversion routines
 
-`src/sparse/format.cc` 实现论文实验用到的格式转换，例如：
+`format.cc` 实现论文实验用到的格式转换，例如：
 
 - `ColumnPartHyb`
 - `CSFToELL3D`
@@ -870,7 +855,7 @@ int bucket_id = upper_bound(buckets, degree - 1);
 
 ### SpMM 示例流水
 
-`examples/spmm/bench_spmm.py` 展示了完整流程。
+`bench_spmm.py` 展示了完整流程。
 
 1. 用 SparseTIR 写 CSR SpMM。
 
@@ -940,7 +925,7 @@ f = tvm.build(mod, target="cuda")
 
 ### SDDMM 示例流水
 
-`examples/sddmm/bench_sddmm.py` 展示了 SparseTIR 如何表达 PRedS 风格优化。
+`bench_sddmm.py` 展示了 SparseTIR 如何表达 PRedS 风格优化。
 
 SDDMM 定义：
 

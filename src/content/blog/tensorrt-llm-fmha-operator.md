@@ -180,21 +180,15 @@ sequence lengths
 
 ## 六、TensorRT-LLM 源码入口
 
-本文参考本地源码：
+本文参考的关键源码文件：
 
 ```text
-inference-framework/TensorRT-LLM/
-```
-
-关键文件：
-
-```text
-tensorrt_llm/_torch/attention_backend/trtllm_gen.py
-tensorrt_llm/_torch/custom_ops/trtllm_gen_custom_ops.py
-cpp/tensorrt_llm/kernels/fmhaDispatcher.h
-cpp/tensorrt_llm/kernels/fmhaDispatcher.cpp
-cpp/tensorrt_llm/thop/trtllmGenQKVProcessOp.cpp
-cpp/tensorrt_llm/thop/attentionOp.cpp
+trtllm_gen.py
+trtllm_gen_custom_ops.py
+fmhaDispatcher.h
+fmhaDispatcher.cpp
+trtllmGenQKVProcessOp.cpp
+attentionOp.cpp
 ```
 
 高层链路：
@@ -262,11 +256,11 @@ if tokens_per_block not in {16, 32, 64}:
 
 ## 八、C++ dispatcher：fmhaDispatcher
 
-C++ 侧入口在：
+C++ 侧入口是：
 
 ```text
-cpp/tensorrt_llm/kernels/fmhaDispatcher.h
-cpp/tensorrt_llm/kernels/fmhaDispatcher.cpp
+fmhaDispatcher.h
+fmhaDispatcher.cpp
 ```
 
 `FmhaDispatcher` 中有两个 runner：

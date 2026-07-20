@@ -69,27 +69,23 @@ DTC-SpMM aims to enhance general-purpose SpMM on GPUs equipped with Tensor Cores
 The work is accepted by ASPLOS'24.
 ```
 
-代码目录中最核心的文件是：
+实现中最核心的文件是：
 
 ```text
-paper/DTC-SPMM/DTC-SpMM_ASPLOS24-main/
-├── DTC-SpMM/
-│   ├── DTCSpMM.cpp
-│   ├── DTCSpMM_kernel.cu
-│   ├── config.h
-│   └── setup.py
-├── reordering/
-│   └── TCA_reorder.py
-└── micro-benchmarking/
-    ├── bench_mma.cu
-    ├── bench_shfl.cu
-    └── bench_offset.cu
+DTCSpMM.cpp
+DTCSpMM_kernel.cu
+config.h
+setup.py
+TCA_reorder.py
+bench_mma.cu
+bench_shfl.cu
+bench_offset.cu
 ```
 
 从源码看，论文的三条主线都能对应到实现：
 
 - `ME-TCF` 格式转换：`DTCSpMM.cpp` 和 `DTCSpMM_kernel.cu` 中的 `preprocess_gpu`、`seg_sort_dequ`、`generate_tcoffset_id_atob`。
-- `TCA reordering`：`reordering/TCA_reorder.py`。
+- `TCA reordering`：`TCA_reorder.py`。
 - DTC 运行时 kernel：`DTCSpMM_kernel.cu` 中大量 `spmm_forward_cuda_kernel_improved_ptx_*` kernel。
 
 ## 二、SpMM 与 Tensor Core 背景

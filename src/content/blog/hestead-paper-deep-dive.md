@@ -459,13 +459,7 @@ L = 1
 
 ## 八、结合源码理解模型实现
 
-源码中模型位于：
-
-```text
-paper/HeSTEAD/trace_analysis_with_gpu-HeSTEAD/models/
-```
-
-核心文件：
+模型相关的核心文件包括：
 
 ```text
 graphlstm.py
@@ -475,7 +469,7 @@ graphlstm_vae_ad_opt.py
 algorithm_utils.py
 ```
 
-训练入口和流程相关文件：
+训练入口和流程相关文件包括：
 
 ```text
 preprocess.py

@@ -368,7 +368,7 @@ MoE 中可能和 EP 组合，例如 Attention DP + MoE EP。
 
 ## 十、TensorRT-LLM 中的 MoE backend
 
-TensorRT-LLM 的 `_torch/modules/fused_moe` 目录有多种 MoE backend：
+TensorRT-LLM 提供了多种 MoE backend：
 
 ```text
 fused_moe_cutlass.py

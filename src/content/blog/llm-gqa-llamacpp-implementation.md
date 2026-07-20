@@ -56,7 +56,7 @@ n_embd_v_gqa = n_embd_head_v * n_head_kv
 
 ## 二、为什么选择 llama.cpp
 
-本地 `inference-framework/` 下有多个主流推理框架：
+主流推理框架包括：
 
 ```text
 vllm
@@ -78,14 +78,14 @@ mlc-llm
 
 并且它的 Q/K/V reshape 和 KV Cache 分配都在 C++ 代码中，适合结合面试手搓实现讲解。
 
-本文参考的本地源码路径：
+本文参考的核心源码文件：
 
 ```text
-inference-framework/llama.cpp/src/llama-hparams.cpp
-inference-framework/llama.cpp/src/llama-hparams.h
-inference-framework/llama.cpp/src/llama-model.cpp
-inference-framework/llama.cpp/src/llama-graph.cpp
-inference-framework/llama.cpp/src/llama-kv-cache.cpp
+llama-hparams.cpp
+llama-hparams.h
+llama-model.cpp
+llama-graph.cpp
+llama-kv-cache.cpp
 ```
 
 ## 三、源码入口总览

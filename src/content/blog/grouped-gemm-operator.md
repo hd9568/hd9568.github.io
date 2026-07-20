@@ -299,11 +299,7 @@ void grouped_gemm(const std::vector<GemmProblem>& problems) {
 
 ## 八、TensorRT-LLM 源码中的 grouped GEMM
 
-TensorRT-LLM 中有一个 C++ grouped GEMM 接口：
-
-```text
-inference-framework/TensorRT-LLM/cpp/tensorrt_llm/kernels/groupGemm.h
-```
+TensorRT-LLM 在 `groupGemm.h` 中声明了 C++ grouped GEMM 接口。
 
 核心声明：
 
@@ -335,21 +331,13 @@ void groupedGemm(
 - `dataType`：FP16/BF16 等。
 - `stream`：CUDA stream。
 
-源码中也能看到它被 LoRA 使用：
-
-```text
-cpp/tensorrt_llm/kernels/lora/lora.cpp
-```
+`lora.cpp` 中也使用了这个接口。
 
 LoRA 和 MoE 类似，也可能产生多个小 GEMM problem，因此 grouped GEMM 同样有价值。
 
 ## 九、Blackwell block-scaled grouped GEMM
 
-TensorRT-LLM 里还有 Blackwell Cute DSL grouped GEMM：
-
-```text
-tensorrt_llm/_torch/cute_dsl_kernels/blackwell/blockscaled_contiguous_grouped_gemm.py
-```
+TensorRT-LLM 的 `blockscaled_contiguous_grouped_gemm.py` 还实现了 Blackwell Cute DSL grouped GEMM。
 
 类名：
 
