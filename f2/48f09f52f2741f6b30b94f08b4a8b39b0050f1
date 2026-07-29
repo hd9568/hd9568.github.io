@@ -1,0 +1,14 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f248f09f52f2741f6b30b94f08b4a8b39b0050f1",
+  "prompts": {},
+  "humans": {
+    "h_52f85f52f0f441": {
+      "author": "霍墨墨 <2358440725@qq.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
