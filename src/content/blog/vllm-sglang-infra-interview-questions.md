@@ -1,7 +1,7 @@
 ---
 title: 'vLLM 与 SGLang 源码面试题：17 个 AI Infra 高频问题'
 description: '基于 vLLM V1 和 SGLang SRT 当前源码，整理调度器、Paged KV Cache、Prefix Cache、Chunked Prefill、CUDA Graph、投机解码、并行与 P/D 分离等 AI Infra 高频问题。'
-category: 'Research & Work'
+category: '推理优化'
 pubDate: '2026-08-17T15:00:00+08:00'
 updatedDate: '2026-08-17T15:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
