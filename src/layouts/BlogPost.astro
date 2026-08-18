@@ -156,6 +156,13 @@ const showUpdatedDate = updatedDate && updatedDate.valueOf() !== pubDate.valueOf
     color: rgb(var(--accent));
   }
 
+  .prose :global(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .post-nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
