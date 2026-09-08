@@ -134,7 +134,18 @@ const showUpdatedDate = updatedDate && updatedDate.valueOf() !== pubDate.valueOf
   .prose :global(h3),
   .prose :global(h4) {
     color: rgb(var(--text-dark));
-    margin-top: 2rem;
+  }
+
+  .prose :global(h2) {
+    margin: 1.65rem 0 0.6rem;
+  }
+
+  .prose :global(h3) {
+    margin: 1.25rem 0 0.5rem;
+  }
+
+  .prose :global(h4) {
+    margin: 1rem 0 0.45rem;
   }
 
   .prose :global(p),
@@ -147,20 +158,49 @@ const showUpdatedDate = updatedDate && updatedDate.valueOf() !== pubDate.valueOf
     color: rgb(var(--text-dark));
   }
 
+  .prose :global(p) {
+    margin-bottom: 0.72rem;
+  }
+
   .prose :global(ul),
   .prose :global(ol) {
+    margin: 0.5rem 0 0.8rem;
     padding-left: 1.35rem;
+  }
+
+  .prose :global(li + li) {
+    margin-top: 0.3rem;
   }
 
   .prose :global(a) {
     color: rgb(var(--accent));
   }
 
+  .prose :global(pre) {
+    margin: 1rem 0;
+    padding: 1rem 1.1rem;
+  }
+
+  .prose :global(blockquote) {
+    margin: 1rem 0;
+    padding: 0.8rem 1rem;
+  }
+
   .prose :global(table) {
     display: block;
     max-width: 100%;
+    margin: 1rem 0;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .prose :global(th),
+  .prose :global(td) {
+    padding: 0.65rem 0.8rem;
+  }
+
+  .prose :global(hr) {
+    margin: 1.4rem 0;
   }
 
   .post-nav {

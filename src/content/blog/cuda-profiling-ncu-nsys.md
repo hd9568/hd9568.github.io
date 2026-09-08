@@ -6,9 +6,7 @@ pubDate: '2026-05-29T12:40:00+08:00'
 updatedDate: '2026-05-29T12:40:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
-
 ## 目录
-
 1. [核心结论](#一核心结论)
 2. [NSYS 和 NCU 的区别](#二nsys-和-ncu-的区别)
 3. [先看时间线](#三先看时间线)
@@ -19,9 +17,7 @@ heroImage: '../../assets/blog-placeholder-1.jpg'
 8. [优化流程](#八优化流程)
 9. [面试回答模板](#九面试回答模板)
 10. [总结](#十总结)
-
 ## 一、核心结论
-
 Profiling 的目标不是收集指标，而是定位瓶颈。
 
 - Nsight Systems（NSYS）看系统级时间线：CPU、GPU、Memcpy、Kernel、Stream 是否重叠。
@@ -30,28 +26,21 @@ Profiling 的目标不是收集指标，而是定位瓶颈。
 - Occupancy 不等于性能，只表示 SM 上活跃 Warp 的比例。
 - Memory Bandwidth 高且算力低，通常说明 Memory-bound。
 - Compute Workload 高且访存不是瓶颈，可能是 Compute-bound。
-
 ## 二、NSYS 和 NCU 的区别
-
 | 工具 | 主要用途 | 关注对象 |
 | --- | --- | --- |
 | Nsight Systems | 系统级时间线 | 程序整体、CPU/GPU 并发、Memcpy、Stream |
 | Nsight Compute | Kernel 级分析 | 单个 kernel 的访存、计算、occupancy、stall |
 
 常见命令：
-
 ```bash
 nsys profile -o report ./app
 ```
-
 ```bash
 ncu --set full ./app
 ```
-
 实际工程中，通常先 `nsys`，再对热点 kernel 用 `ncu`。
-
 ## 三、先看时间线
-
 NSYS 中重点看：
 
 - GPU 是否有长时间空洞。
@@ -61,23 +50,17 @@ NSYS 中重点看：
 - 多 Stream 是否真的并发。
 
 例如，如果时间线是：
-
 ```text
 H2D -> Kernel -> D2H -> H2D -> Kernel -> D2H
 ```
-
 说明传输和计算没有重叠。可以考虑 Streams 和 Ping-Pong Buffer。
 
 如果时间线里很多小 kernel：
-
 ```text
 kernel1 kernel2 kernel3 kernel4 ...
 ```
-
 可能需要考虑 Kernel Fusion 或减少 launch overhead。
-
 ## 四、Occupancy
-
 Occupancy 表示一个 SM 上实际活跃 Warp 数与理论最大活跃 Warp 数的比例。
 
 影响因素：
@@ -90,16 +73,12 @@ Occupancy 表示一个 SM 上实际活跃 Warp 数与理论最大活跃 Warp 数
 Occupancy 低可能导致无法隐藏访存延迟，但 Occupancy 高不代表一定快。
 
 例子：
-
 ```text
 Kernel A: Occupancy 30%, 每个线程做大量计算，数据复用好，可能很快。
 Kernel B: Occupancy 90%, 但访存完全随机，仍然可能很慢。
 ```
-
 因此 Occupancy 只是线索，不是目标本身。
-
 ## 五、Compute Workload
-
 Compute Workload 相关指标用来判断计算单元是否繁忙。
 
 关注：
@@ -114,9 +93,7 @@ Compute Workload 相关指标用来判断计算单元是否繁忙。
 - 数据类型是否是 FP16/BF16/TF32/INT8 等合适类型。
 - 矩阵维度是否满足库或硬件要求。
 - 是否调用了正确的 cuBLAS/cuDNN/CUTLASS 路径。
-
 ## 六、Memory Bandwidth
-
 Memory Bandwidth 指标用于判断显存带宽利用情况。
 
 关注：
@@ -136,11 +113,8 @@ Memory Bandwidth 指标用于判断显存带宽利用情况。
 - 用 Shared Memory 复用数据。
 - Kernel Fusion 减少中间结果写回。
 - 使用更紧凑数据类型。
-
 ## 七、常见瓶颈判断
-
 ### 1. GPU 时间线有空洞
-
 可能原因：
 
 - CPU 端准备数据慢。
@@ -148,36 +122,26 @@ Memory Bandwidth 指标用于判断显存带宽利用情况。
 - Kernel launch 间隔大。
 
 优化：减少同步、批量提交、使用 CUDA Graph、改进数据加载。
-
 ### 2. Memcpy 占比高
-
 可能原因：Host/Device 数据来回拷贝太多。
 
 优化：减少传输、pinned memory、Streams 重叠、数据常驻 GPU。
-
 ### 3. Memory-bound
-
 现象：显存带宽高，计算利用率低。
 
 优化：访存合并、Shared Memory、Fusion、减少不必要读写。
-
 ### 4. Compute-bound
-
 现象：计算单元利用率高，访存不是主要瓶颈。
 
 优化：Tensor Core、指令级优化、减少分支、循环展开。
-
 ### 5. Warp stall 高
-
 需要看具体 stall 类型：
 
 - Memory Dependency：等内存。
 - Barrier：等同步。
 - Not Selected：可运行 Warp 多但未被调度。
 - Execution Dependency：等前序指令结果。
-
 ## 八、优化流程
-
 一个比较稳的流程：
 
 1. 用 NSYS 看整体时间线，确认热点在哪里。
@@ -188,9 +152,7 @@ Memory Bandwidth 指标用于判断显存带宽利用情况。
 6. 重新 profiling，对比指标和端到端时间。
 
 不要只看单个指标，最终目标是端到端耗时下降。
-
 ## 九、面试回答模板
-
 如果问题是“NCU 和 NSYS 有什么区别”，可以这样回答：
 
 1. NSYS 是系统级 profiler，用来看 CPU/GPU 时间线、Memcpy、Kernel、Stream 重叠和同步开销。
@@ -198,7 +160,5 @@ Memory Bandwidth 指标用于判断显存带宽利用情况。
 3. 优化通常先用 NSYS 找端到端瓶颈，再用 NCU 分析热点 kernel。
 4. Occupancy 表示活跃 Warp 比例，不等于性能。
 5. Memory Bandwidth 高且计算利用率低，通常是 Memory-bound；计算单元利用率高则可能是 Compute-bound。
-
 ## 十、总结
-
 CUDA 优化不能只凭经验。NSYS 回答“时间花在哪里”，NCU 回答“这个 kernel 为什么慢”。好的优化流程是先定位，再假设，再修改，再用指标验证。
