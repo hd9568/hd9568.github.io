@@ -474,8 +474,8 @@ GEMM Problem
 -> 合并写回 Global Memory
 ```
 能沿这条路径解释每个模板参数，才算真正读懂了 CUTLASS。
+进一步阅读真实推理框架中的专用实现：[LMDeploy Grouped GEMM 源码详解：从 C++ 调度到 CUTLASS WGMMA](/blog/cuda-lmdeploy-cutlass-grouped-gemm-source/)。
 
-参考资料：
 
 - [CUTLASS GitHub](https://github.com/NVIDIA/cutlass)
 - [CUTLASS C++ Quick Start](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/quickstart.html)
