@@ -1,467 +1,510 @@
 ---
-title: 'Quick Sort 与 Quick Select：从分区不变量到完整 C++ 实现'
-description: '用同一个三路分区核心讲清快速排序与快速选择，包括 Pivot、循环不变量、重复元素、随机化、复杂度、递归栈控制及完整可运行的 C++17 代码。'
+title: 'Quick Sort 与 Quick Select：从 Partition 到完整 C++ 实现'
+description: '用 LeetCode 风格的简单 C++ 代码讲清 Partition、Quick Sort 和 Quick Select，并逐步展示指针移动、递归区间与第 k 小/第 k 大的计算过程。'
 category: '数据结构和算法'
 pubDate: '2026-09-15T10:00:00+08:00'
-updatedDate: '2026-09-15T10:00:00+08:00'
+updatedDate: '2026-09-19T10:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
 ---
 ## 目录
-1. [两个算法其实只差一步](#一两个算法其实只差一步)
-2. [核心操作：三路分区](#二核心操作三路分区)
-3. [Quick Sort 如何递归排序](#三quick-sort-如何递归排序)
-4. [Quick Select 如何只找第 k 小](#四quick-select-如何只找第-k-小)
-5. [完整 C++17 实现](#五完整-c17-实现)
-6. [正确性与复杂度](#六正确性与复杂度)
-7. [边界条件与使用方法](#七边界条件与使用方法)
-## 一、两个算法其实只差一步
-Quick Sort 和 Quick Select 都从同一个操作开始：选择一个基准值 `pivot`，再将数组分成三部分。
+1. [Quick Sort 和 Quick Select 的关系](#一quick-sort-和-quick-select-的关系)
+2. [先彻底理解 Partition](#二先彻底理解-partition)
+3. [Quick Sort 的完整流程](#三quick-sort-的完整流程)
+4. [Quick Select 的完整流程](#四quick-select-的完整流程)
+5. [完整 C++ 代码](#五完整-c-代码)
+6. [复杂度与常见问题](#六复杂度与常见问题)
+## 一、Quick Sort 和 Quick Select 的关系
+两个算法都依赖同一个核心操作：`partition`，即分区。
+
+分区从数组中选择一个基准元素 `pivot`，重新排列当前区间，使得：
 ```text
-[小于 pivot] [等于 pivot] [大于 pivot]
+[小于等于 pivot 的元素] pivot [大于 pivot 的元素]
 ```
-区别只在分区结束后：
+假设分区后 `pivot` 位于下标 `p`：
+```text
+left ... p - 1 | p | p + 1 ... right
+    <= pivot   |pivot|    > pivot
+```
+此时可以确定：
+> `pivot` 已经位于最终排序结果中的正确下标 `p`。
+
+注意，左右区间内部还没有完全有序。例如：
+```text
+[4, 2, 3] 6 [7]
+```
+左边的 `4、2、3` 都小于 6，但它们之间仍然无序。
+
+两个算法的区别只在分区之后：
 ```text
 Quick Sort:
-  左右两边都要继续处理，因为整个数组都要有序。
+  为了让整个数组有序，继续处理左区间和右区间。
 Quick Select:
-  只处理第 k 小元素所在的一边，另一边可以直接丢弃。
+  为了寻找某个下标，只处理目标下标所在的一边。
+```
+可以先记成：
+```text
+Quick Sort   = partition + 递归两边
+Quick Select = partition + 只递归一边
+```
+本文所有区间都使用闭区间：
+```text
+[left, right]
+```
+因此区间包含 `nums[left]` 和 `nums[right]`。
+## 二、先彻底理解 Partition
+使用 LeetCode 中常见的写法：选择当前区间最后一个元素作为 `pivot`。
+```cpp
+int partitionArray(vector<int>& nums, int left, int right) {
+    int pivot = nums[right];
+    int i = left;
+    for (int j = left; j < right; ++j) {
+        if (nums[j] <= pivot) {
+            swap(nums[i], nums[j]);
+            ++i;
+        }
+    }
+    swap(nums[i], nums[right]);
+    return i;
+}
+```
+代码只有两个指针：
+```text
+j:
+  从左到右检查每个元素。
+i:
+  下一个“小于等于 pivot 的元素”应该放置的位置。
+```
+### 循环过程中数组被分成什么
+每次开始检查 `nums[j]` 前，都有：
+```text
+[left, i - 1]  <= pivot
+[i, j - 1]     > pivot
+[j, right - 1] 还没有检查
+[right]         pivot
+```
+初始时：
+```text
+i = left
+j = left
+```
+前两个区间都是空的，所有元素都还没有检查。
+
+每次只判断 `nums[j]`。
+
+如果：
+```text
+nums[j] <= pivot
+```
+就把它交换到位置 `i`，然后执行：
+```cpp
+++i;
+```
+如果：
+```text
+nums[j] > pivot
+```
+什么都不做，只让 `j` 继续向右移动。这个大元素自然会留在 `[i, j]` 区间中。
+
+扫描结束后：
+```text
+[left, i - 1]  <= pivot
+[i, right - 1] > pivot
+[right]         pivot
+```
+最后交换：
+```cpp
+swap(nums[i], nums[right]);
+```
+就得到：
+```text
+[left, i - 1] <= pivot
+[i]            pivot
+[i + 1, right] > pivot
+```
+所以 `i` 就是 Pivot 的最终下标。
+### 完整手算一次
+输入：
+```text
+nums = [4, 2, 7, 3, 6]
+left = 0
+right = 4
+pivot = nums[4] = 6
+i = 0
+```
+检查 `j=0`：
+```text
+nums[0] = 4 <= 6
+swap(nums[0], nums[0])
+i = 1
+数组: [4, 2, 7, 3, 6]
+```
+检查 `j=1`：
+```text
+nums[1] = 2 <= 6
+swap(nums[1], nums[1])
+i = 2
+数组: [4, 2, 7, 3, 6]
+```
+检查 `j=2`：
+```text
+nums[2] = 7 > 6
+不交换
+i 仍然为 2
+数组: [4, 2, 7, 3, 6]
+```
+检查 `j=3`：
+```text
+nums[3] = 3 <= 6
+swap(nums[2], nums[3])
+i = 3
+数组: [4, 2, 3, 7, 6]
+```
+扫描结束，将 Pivot 放到 `i=3`：
+```text
+swap(nums[3], nums[4])
+数组: [4, 2, 3, 6, 7]
+```
+返回：
+```text
+p = 3
+```
+现在可以确定：
+```text
+nums[0..2] <= 6
+nums[3]     = 6
+nums[4]     > 6
+```
+`6` 已经处在整个数组排序后的正确位置，但 `[4,2,3]` 仍需继续处理。
+## 三、Quick Sort 的完整流程
+Quick Sort 分区后递归处理两边：
+```cpp
+void quickSort(vector<int>& nums, int left, int right) {
+    if (left >= right) {
+        return;
+    }
+    int p = partitionArray(nums, left, right);
+    quickSort(nums, left, p - 1);
+    quickSort(nums, p + 1, right);
+}
+```
+递归终止条件是：
+```cpp
+left >= right
+```
+此时区间中最多只有一个元素，不需要排序。
+### 用同一个数组走完整过程
+初始数组：
+```text
+[4, 2, 7, 3, 6]
+```
+第一次分区：
+```text
+[4, 2, 3] 6 [7]
+             p=3
+```
+然后递归：
+```text
+左区间 [0, 2]: [4, 2, 3]
+右区间 [4, 4]: [7]
+```
+右区间只有一个元素，直接结束。
+
+处理左区间 `[4,2,3]`，选择最后的 3 作为 Pivot：
+```text
+检查 4:
+  4 > 3，不交换
+检查 2:
+  2 <= 3，与位置 0 的 4 交换
+数组变为 [2, 4, 3, 6, 7]
+```
+最后将 Pivot 3 放到下标 1：
+```text
+[2] 3 [4] 6 [7]
+     p=1
+```
+接下来两个子区间：
+```text
+[0, 0] 只有元素 2
+[2, 2] 只有元素 4
+```
+都直接结束。最终结果：
+```text
+[2, 3, 4, 6, 7]
+```
+递归结构可以画成：
+```text
+[4, 2, 7, 3, 6]
+        |
+      pivot 6
+      /     \
+[4, 2, 3]  [7]
+     |
+   pivot 3
+   /     \
+ [2]     [4]
+```
+Quick Sort 必须处理左右两边，因为目标是让每个元素都有序。
+## 四、Quick Select 的完整流程
+Quick Select 用于寻找：
+```text
+第 k 小
+第 k 大
+中位数
+Top-K 的边界值
+```
+它不需要把整个数组排好序。
+### 先把“第 k 小”转成目标下标
+数组下标从 0 开始：
+```text
+第 1 小 -> target = 0
+第 2 小 -> target = 1
+第 k 小 -> target = k - 1
+```
+如果数组长度为 `n`：
+```text
+第 1 大 -> target = n - 1
+第 2 大 -> target = n - 2
+第 k 大 -> target = n - k
 ```
 例如：
 ```text
-数组:  [7, 2, 5, 3, 5, 1, 5, 9]
-pivot: 5
-分区:  [2, 3, 1] [5, 5, 5] [9, 7]
-下标:   0  1  2   3  4  5   6  7
+排序后: [2, 3, 4, 6, 7]
+下标:     0  1  2  3  4
+第 3 小: target = 3 - 1 = 2，答案是 4
+第 2 大: target = 5 - 2 = 3，答案是 6
 ```
-分区后，三个区间内部不一定有序，但区间之间已有确定的大小关系：
-```text
-任意左区元素 < 任意中区元素 < 任意右区元素
-```
-因此：
-```text
-Quick Sort:
-  只需递归排序左区和右区。
-Quick Select:
-  k < 3       -> 去左区
-  3 <= k < 6  -> 答案就是 pivot
-  k >= 6      -> 去右区
-```
-本文的 `k` 使用 **0-based 下标**：
-```text
-k = 0 表示最小值
-k = 1 表示第二小
-k = n - 1 表示最大值
-```
-## 二、核心操作：三路分区
-### 为什么不只分成两路
-经典二路分区只保证：
-```text
-[<= pivot] [> pivot]
-```
-当数组包含大量相同元素时，例如：
-```text
-[5, 5, 5, 5, 5, 5]
-```
-二路分区可能每次只排除一个元素，递归不断处理几乎相同的区间，性能退化到：
-```text
-T(n) = T(n - 1) + O(n) = O(n^2)
-```
-三路分区一次跳过所有等于 `pivot` 的元素。这对重复值很多的数据更稳健。
-### 三个指针表示什么
-对半开区间 `[left, right)` 分区：
+### 分区后只进入一边
 ```cpp
-int lt = left;
-int i  = left;
-int gt = right;
-```
-循环过程中始终保持以下不变量：
-```text
-[left, lt)  < pivot
-[lt, i)     = pivot
-[i, gt)     尚未检查
-[gt, right) > pivot
-```
-开始时：
-```text
-lt = i = left, gt = right
-```
-三个已分类区间都是空的，全部元素位于 `[i, gt)`。
-### 每次只处理 `a[i]`
-情况一，`a[i] < pivot`：
-```cpp
-std::swap(a[lt], a[i]);
-++lt;
-++i;
-```
-`a[i]` 被放进小于区。交换前的 `a[lt]` 属于等于区，因此交换后它位于新的 `[lt, i)` 内。
-
-情况二，`a[i] > pivot`：
-```cpp
---gt;
-std::swap(a[i], a[gt]);
-```
-大元素被放到 `[gt, right)`。此时不能执行 `++i`，因为从右边交换到 `a[i]` 的元素还没有检查。
-
-情况三，`a[i] == pivot`：
-```cpp
-++i;
-```
-等于区向右扩展一格。
-
-循环在 `i == gt` 时结束，未检查区间变为空：
-```text
-[left, lt)  < pivot
-[lt, gt)    = pivot
-[gt, right) > pivot
-```
-完整分区函数：
-```cpp
-struct EqualRange {
-  int begin;  // 等于 pivot 区间的起点
-  int end;    // 等于 pivot 区间的终点，不包含 end
-};
-EqualRange partition_three_way(
-    std::vector<int>& a,
+int quickSelect(
+    vector<int>& nums,
     int left,
     int right,
-    std::mt19937& rng) {
-  std::uniform_int_distribution<int> dist(left, right - 1);
-  const int pivot = a[dist(rng)];
-  int lt = left;
-  int i = left;
-  int gt = right;
-  while (i < gt) {
-    if (a[i] < pivot) {
-      std::swap(a[lt], a[i]);
-      ++lt;
-      ++i;
-    } else if (a[i] > pivot) {
-      --gt;
-      std::swap(a[i], a[gt]);
-    } else {
-      ++i;
+    int target) {
+    int p = partitionArray(nums, left, right);
+    if (p == target) {
+        return nums[p];
     }
-  }
-  return {lt, gt};
-}
-```
-这里随机选择的是 `pivot` 的值，不要求先把 Pivot 交换到数组末尾。三路分区只比较元素与该值的大小。
-## 三、Quick Sort 如何递归排序
-分区返回：
-```text
-[left, equal.begin)        < pivot
-[equal.begin, equal.end)   = pivot
-[equal.end, right)         > pivot
-```
-中间区已经位于最终正确位置，不必继续排序。最直接的递归是：
-```cpp
-quick_sort(left, equal.begin);
-quick_sort(equal.end, right);
-```
-### 为什么优先递归较小区间
-如果每次 Pivot 都是最小值，普通递归的调用栈会达到 `O(n)`，大数组可能栈溢出。算法仍可能执行 `O(n^2)` 次比较，但可以把栈空间限制为 `O(log n)`：
-```text
-较小区间:
-  使用递归。
-较大区间:
-  在当前函数中通过 while 继续处理。
-```
-因为递归进入的区间大小最多是当前区间的一半：
-```text
-n -> n/2 -> n/4 -> ... -> 1
-```
-递归深度不超过 `log2(n)`。
-
-实现：
-```cpp
-void quick_sort_impl(
-    std::vector<int>& a,
-    int left,
-    int right,
-    std::mt19937& rng) {
-  while (right - left > 1) {
-    EqualRange equal =
-        partition_three_way(a, left, right, rng);
-    int left_size = equal.begin - left;
-    int right_size = right - equal.end;
-    if (left_size < right_size) {
-      quick_sort_impl(a, left, equal.begin, rng);
-      left = equal.end;
-    } else {
-      quick_sort_impl(a, equal.end, right, rng);
-      right = equal.begin;
+    if (target < p) {
+        return quickSelect(nums, left, p - 1, target);
     }
-  }
+    return quickSelect(nums, p + 1, right, target);
 }
 ```
-注意 `while` 更新的是当前待排序区间：
+判断逻辑是：
 ```text
-递归左区后:
-  left = equal.end
-  当前函数继续处理右区
-递归右区后:
-  right = equal.begin
-  当前函数继续处理左区
+p == target:
+  Pivot 正好位于目标下标，直接返回。
+target < p:
+  目标位于 Pivot 左侧，只搜索左边。
+target > p:
+  目标位于 Pivot 右侧，只搜索右边。
 ```
-等于区不会再次进入任何待排序范围。
-## 四、Quick Select 如何只找第 k 小
-Quick Select 不需要整个数组有序。一次分区后，只需判断 `k` 落在哪个区间。
-```cpp
-if (k < equal.begin) {
-  right = equal.begin;
-} else if (k >= equal.end) {
-  left = equal.end;
-} else {
-  return a[k];
-}
-```
-它可以完全用循环实现，不需要递归。
-### 手算一次
+另一边可以直接丢弃，因为分区已经确定 Pivot 的最终排名。
+### 手算第 3 小
 输入：
 ```text
-a = [7, 2, 5, 3, 5, 1, 5, 9]
-k = 6
+nums = [4, 2, 7, 3, 6]
+k = 3
+target = k - 1 = 2
 ```
-假设第一次选择 `pivot=5`：
+第一次分区选择 6：
 ```text
-分区后: [2, 3, 1] [5, 5, 5] [9, 7]
-equal = [3, 6)
+[4, 2, 3] 6 [7]
+             p=3
 ```
 因为：
 ```text
-k = 6 >= equal.end = 6
+target=2 < p=3
 ```
-第 7 小元素一定在右区 `[6, 8)`。左区和中区共有 6 个元素，而且都不大于右区，因此不可能包含答案，可以永久丢弃。
+只需搜索左区间 `[0,2]`，右边的 6 和 7 不可能是第 3 小。
 
-右区若选择 `pivot=9`：
+左区间当前为：
 ```text
-[7] [9]
+[4, 2, 3]
 ```
-`k=6` 落在值为 7 的区间，答案为 7。
-
-这里 `k` 始终是原数组中的绝对下标，不需要在进入右区后执行 `k -= right_begin`。因为函数只移动 `[left, right)` 边界，没有创建子数组。
-## 五、完整 C++17 实现
-下面的程序可以直接编译运行。Quick Sort 原地修改数组；Quick Select 也会改变元素顺序，因此示例传入副本。
+选择 3 分区：
+```text
+[2] 3 [4]
+     p=1
+```
+因为：
+```text
+target=2 > p=1
+```
+只需搜索右区间 `[2,2]`。这个区间只有一个元素 4，因此答案是：
+```text
+第 3 小 = 4
+```
+Quick Select 没有继续排序下标 0 和 1 的元素，也没有排序下标 3 和 4 的元素。它只保证目标下标上的值正确。
+## 五、完整 C++ 代码
+下面只使用 `vector`、函数、循环、递归和 `swap`。
 ```cpp
-#include <algorithm>
-#include <cstdint>
 #include <iostream>
-#include <random>
-#include <stdexcept>
+#include <utility>
 #include <vector>
-class QuickAlgorithms {
- public:
-  explicit QuickAlgorithms(std::uint32_t seed = std::random_device{}())
-      : rng_(seed) {}
-  void sort(std::vector<int>& a) {
-    quick_sort(a, 0, static_cast<int>(a.size()));
-  }
-  int select(std::vector<int>& a, int k) {
-    if (k < 0 || k >= static_cast<int>(a.size())) {
-      throw std::out_of_range("k is outside [0, a.size())");
-    }
-    int left = 0;
-    int right = static_cast<int>(a.size());
-    while (true) {
-      EqualRange equal = partition(a, left, right);
-      if (k < equal.begin) {
-        right = equal.begin;
-      } else if (k >= equal.end) {
-        left = equal.end;
-      } else {
-        return a[k];
-      }
-    }
-  }
- private:
-  struct EqualRange {
-    int begin;
-    int end;
-  };
-  std::mt19937 rng_;
-  EqualRange partition(std::vector<int>& a, int left, int right) {
-    std::uniform_int_distribution<int> dist(left, right - 1);
-    const int pivot = a[dist(rng_)];
-    int lt = left;
+using namespace std;
+int partitionArray(vector<int>& nums, int left, int right) {
+    int pivot = nums[right];
     int i = left;
-    int gt = right;
-    while (i < gt) {
-      if (a[i] < pivot) {
-        std::swap(a[lt], a[i]);
-        ++lt;
-        ++i;
-      } else if (a[i] > pivot) {
-        --gt;
-        std::swap(a[i], a[gt]);
-      } else {
-        ++i;
-      }
+    for (int j = left; j < right; ++j) {
+        if (nums[j] <= pivot) {
+            swap(nums[i], nums[j]);
+            ++i;
+        }
     }
-    return {lt, gt};
-  }
-  void quick_sort(
-      std::vector<int>& a,
-      int left,
-      int right) {
-    while (right - left > 1) {
-      EqualRange equal = partition(a, left, right);
-      const int left_size = equal.begin - left;
-      const int right_size = right - equal.end;
-      if (left_size < right_size) {
-        quick_sort(a, left, equal.begin);
-        left = equal.end;
-      } else {
-        quick_sort(a, equal.end, right);
-        right = equal.begin;
-      }
+    swap(nums[i], nums[right]);
+    return i;
+}
+void quickSort(vector<int>& nums, int left, int right) {
+    if (left >= right) {
+        return;
     }
-  }
-};
+    int p = partitionArray(nums, left, right);
+    quickSort(nums, left, p - 1);
+    quickSort(nums, p + 1, right);
+}
+int quickSelect(
+    vector<int>& nums,
+    int left,
+    int right,
+    int target) {
+    if (left == right) {
+        return nums[left];
+    }
+    int p = partitionArray(nums, left, right);
+    if (p == target) {
+        return nums[p];
+    }
+    if (target < p) {
+        return quickSelect(nums, left, p - 1, target);
+    }
+    return quickSelect(nums, p + 1, right, target);
+}
+int findKthSmallest(vector<int>& nums, int k) {
+    int target = k - 1;
+    return quickSelect(nums, 0, nums.size() - 1, target);
+}
+int findKthLargest(vector<int>& nums, int k) {
+    int target = nums.size() - k;
+    return quickSelect(nums, 0, nums.size() - 1, target);
+}
 int main() {
-  std::vector<int> input{7, 2, 5, 3, 5, 1, 5, 9};
-  QuickAlgorithms algorithms(42);  // 固定 Seed，方便复现实验
-  std::vector<int> sorted = input;
-  algorithms.sort(sorted);
-  std::cout << "sorted:";
-  for (int value : sorted) {
-    std::cout << ' ' << value;
-  }
-  std::cout << '\n';
-  std::vector<int> selected = input;
-  int k = 6;
-  std::cout << "index " << k
-            << " after sorting = "
-            << algorithms.select(selected, k)
-            << '\n';
+    vector<int> input{4, 2, 7, 3, 6};
+    vector<int> sorted = input;
+    quickSort(sorted, 0, sorted.size() - 1);
+    cout << "sorted:";
+    for (int x : sorted) {
+        cout << ' ' << x;
+    }
+    cout << '\n';
+    vector<int> a = input;
+    cout << "3rd smallest: " << findKthSmallest(a, 3) << '\n';
+    vector<int> b = input;
+    cout << "2nd largest: " << findKthLargest(b, 2) << '\n';
 }
 ```
-编译：
+编译运行：
 ```bash
-g++ -std=c++17 -O2 -Wall -Wextra quick_algorithms.cpp -o quick_algorithms
+g++ -std=c++17 -O2 quick_algorithms.cpp -o quick_algorithms
 ./quick_algorithms
 ```
 输出：
 ```text
-sorted: 1 2 3 5 5 5 7 9
-index 6 after sorting = 7
+sorted: 2 3 4 6 7
+3rd smallest: 4
+2nd largest: 6
 ```
-若只需要找第 `x` 小，传入：
-```cpp
-int answer = algorithms.select(a, x - 1);
-```
-因为自然语言“第 1 小”对应 0-based 的 `k=0`。
-## 六、正确性与复杂度
-### 分区为什么正确
-每轮循环前保持：
-```text
-[left, lt)  < pivot
-[lt, i)     = pivot
-[i, gt)     unknown
-[gt, right) > pivot
-```
-三种分支都只把一个未知元素移动到正确区间，并让 `[i, gt)` 缩短一格。循环必然结束；结束时未知区间为空，因此三个分区成立。
-### Quick Sort 为什么正确
-分区后：
-```text
-左区所有元素 < 中区
-中区所有元素 < 右区
-```
-递归使左区和右区各自有序，中间区本身全相等，所以拼接后的整个区间有序。长度为 0 或 1 的区间天然有序，是递归终点。
-### Quick Select 为什么正确
-设等于区为 `[p, q)`：
-```text
-k < p:
-  第 k 小一定在左区。
-k >= q:
-  左区和中区已有 q 个更小或相等的元素，
-  第 k 小一定在右区。
-p <= k < q:
-  排序后该位置必然等于 pivot。
-```
-每轮至少排除等于区，搜索区间严格缩小，所以算法一定终止。
-### 时间复杂度
-一次分区扫描当前区间一次，成本是 `O(n)`。
+Quick Sort 和 Quick Select 都会通过交换改变原数组。示例创建 `sorted`、`a`、`b` 三个副本，是为了让三个操作都从相同输入开始。
 
-随机 Pivot 下，Quick Sort 的期望递推近似为：
+LeetCode 215“数组中的第 K 个最大元素”对应的核心入口就是：
+```cpp
+int findKthLargest(vector<int>& nums, int k) {
+    int target = nums.size() - k;
+    return quickSelect(nums, 0, nums.size() - 1, target);
+}
+```
+题目保证 `k` 合法时，可以省略参数检查。
+## 六、复杂度与常见问题
+### 时间复杂度
+一次 `partition` 只扫描当前区间一次：
+```text
+Partition: O(n)
+```
+Quick Sort 平均每次把数组分成大小接近的两半：
 ```text
 T(n) = 2T(n/2) + O(n)
      = O(n log n)
 ```
-最坏情况下每次只排除一个元素：
+如果每次 Pivot 都是最大值或最小值：
 ```text
 T(n) = T(n - 1) + O(n)
      = O(n^2)
 ```
-Quick Select 只进入一边，期望成本为：
+Quick Select 每次只进入一边，平均情况为：
 ```text
 T(n) = T(n/2) + O(n)
      = n + n/2 + n/4 + ...
      = O(n)
 ```
-最坏情况仍为 `O(n^2)`。
-
-空间复杂度：
+最坏情况同样是 `O(n^2)`。
+### 为什么已排序数组可能很慢
+本文总是选择最后一个元素为 Pivot。对于：
 ```text
-Quick Sort:
-  原地分区 O(1)
-  递归栈 O(log n)
-Quick Select:
-  原地分区 O(1)
-  循环实现无递归栈
+[1, 2, 3, 4, 5]
 ```
-这里 Quick Sort 的 `O(log n)` 栈空间由“只递归较小区间”保证，与 Pivot 是否均匀无关。
-## 七、边界条件与使用方法
-### 空数组与单元素
+每次 Pivot 都是最大值，分区只能排除一个元素：
+```text
+长度 5 -> 4 -> 3 -> 2 -> 1
+```
+LeetCode 中常见的改进是在分区前随机选择 Pivot：
 ```cpp
-std::vector<int> a;
-algorithms.sort(a);  // 合法，什么也不做
+#include <cstdlib>
+int randomIndex = left + rand() % (right - left + 1);
+swap(nums[randomIndex], nums[right]);
 ```
-`sort()` 只有在区间长度大于 1 时才调用分区，因此不会为 `uniform_int_distribution` 构造非法范围。
-
-Quick Select 对空数组没有合法的 `k`，会抛出：
+后面的分区代码完全不变。随机化不能消除理论上的最坏情况，但能避免已排序输入稳定触发最坏情况。
+### 空数组和非法 k
+Quick Sort 的调用：
 ```cpp
-std::out_of_range
+quickSort(nums, 0, nums.size() - 1);
 ```
+空数组时右边界转换后需要谨慎处理。更安全的外层写法是：
+```cpp
+if (!nums.empty()) {
+    quickSort(nums, 0, nums.size() - 1);
+}
+```
+Quick Select 必须保证：
+```text
+1 <= k <= nums.size()
+```
+否则不存在第 k 小或第 k 大。LeetCode 题目会保证 `k` 合法，所以完整代码没有加入异常处理。
 ### 重复元素
-```text
-[4, 4, 4, 4]
-```
-一次分区得到：
-```text
-equal = [0, 4)
-```
-Quick Sort 立即结束；任意合法 `k` 的 Quick Select 也立即返回 4。
-### 已排序或逆序输入
-固定选择首元素或尾元素会稳定地产生极不均匀分区。本文从当前区间均匀随机选择 Pivot，使任何输入排列都具有相同的期望复杂度。
-
-随机化不能消除理论上的 `O(n^2)` 最坏情况，但能防止“已排序数组必然最坏”。
-### 是否稳定
-Quick Sort 不是稳定排序。若两个元素的 Key 相等，交换可能改变它们的相对顺序：
-```text
-(score=5, id=A)
-(score=5, id=B)
-```
-排序后 `B` 可能出现在 `A` 前。如果业务要求稳定性，应使用 `std::stable_sort` 或 Merge Sort。
-### 何时使用哪个接口
-```text
-需要整个数组有序:
-  Quick Sort，实际工程通常直接用 std::sort。
-只需要中位数、Top-K 边界或第 k 小:
-  Quick Select，避免排序所有元素。
-只需要 STL:
-  std::nth_element 实现与 Quick Select 相同的接口语义。
-```
-例如找中位数：
+本文使用：
 ```cpp
-int middle = static_cast<int>(a.size() / 2);
-int median = algorithms.select(a, middle);
+nums[j] <= pivot
 ```
-若数组长度为偶数，“中位数”可能定义为中间两个数的平均值。这时需分别选择：
-```text
-k1 = n / 2 - 1
-k2 = n / 2
-```
-两次选择会修改数组但不影响答案；也可以先对 `k2` 执行一次选择，再在左侧找最大值。
+所以等于 Pivot 的元素会被放到左边。这不会影响正确性，但如果数组中大量元素相等，分区可能很不均匀，性能退化到 `O(n^2)`。
 
-最终只需记住一个核心：
-> 分区负责建立大小关系；Quick Sort 处理两边，Quick Select 只处理包含 `k` 的一边。
+处理大量重复元素时可以使用三路分区：
+```text
+[< pivot] [= pivot] [> pivot]
+```
+但三路分区需要更多指针。应先完全理解本文的二路分区，再学习该优化。
+### Quick Sort 是否稳定
+不稳定。`swap` 可能改变相等元素原来的相对顺序。
+
+需要稳定排序时使用：
+```cpp
+std::stable_sort
+```
+实际工程中需要完整排序时，通常直接使用：
+```cpp
+std::sort
+```
+只需要第 k 小/大时可使用：
+```cpp
+std::nth_element
+```
+最后只需记住：
+> `partition` 确定一个 Pivot 的最终位置；Quick Sort 继续处理两边，Quick Select 只处理目标所在的一边。
