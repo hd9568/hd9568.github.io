@@ -1,0 +1,754 @@
+---
+title: 'SparseDitto 论文精读：从稀疏结构分析到 GPU 编译计划与 CUDA 生成'
+description: '结合全部正文与附录，拆解 SparseDitto 的 36 维结构特征、可解释模板排序、架构感知计划合成和测量反馈；分析双 GPU 实验、七个案例及生成的 SpMM 源码。'
+category: 'Research & Work'
+pubDate: '2026-11-03T17:00:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import PaperFigure from '../../components/PaperFigure.astro';
+import { withBase } from '../../lib/blog';
+import fig1a from '../../assets/sparseditto/fig01a-design-space.png';
+import fig1b from '../../assets/sparseditto/fig01b-workflow.png';
+import fig2 from '../../assets/sparseditto/fig02-sparse-formats.png';
+import fig3 from '../../assets/sparseditto/fig03-performance-sensitivity.png';
+import fig4 from '../../assets/sparseditto/fig04-system-overview.png';
+import fig5 from '../../assets/sparseditto/fig05-plan-synthesis.png';
+import fig6 from '../../assets/sparseditto/fig06-blackwell-speedups.png';
+import fig7 from '../../assets/sparseditto/fig07-h200-speedups.png';
+import fig8 from '../../assets/sparseditto/fig08-permutation-importance.png';
+import fig9 from '../../assets/sparseditto/fig09-gcn-training.png';
+import fig10 from '../../assets/sparseditto/fig10-model-native-importance.png';
+
+SparseDitto 研究的是：给定一个稀疏矩阵、一个算子和一块 GPU，怎样自动构造适合这个任务的稀疏表示与 CUDA 实现。其核心对象是**编译计划**：同时描述数据怎么存、工作怎么分、数据怎么流动，以及如何使用目标 GPU 的资源。结构分析和学习模型提供起点，LLM 将计划实现为 CUDA，正确性检查和实测性能决定后续修改。
+
+论文覆盖 SpMV、SpMM 和 SpGEMM。在 60 个 SuiteSparse 矩阵上，作者报告相对 cuSPARSE 的整体几何平均加速为 RTX PRO 6000 上的 2.68 倍、H200 上的 2.79 倍。这个结果对应离线生成后的计算阶段；生成过程平均约 30 分钟、API 成本约 20 美元每矩阵，预处理也不计入 kernel 延迟。
+
+本文依据 **arXiv:2608.05033v3，2026 年 9 月 10 日版本**，覆盖正文、实验表格、附录设计空间、完整矩阵清单和 CUDA 示例。性能数据均为论文报告，本文未独立复现 GPU 实验。
+
+> **原文**：[SparseDitto: An Agentic Sparse Compilation Framework through Architecture-Aware Synthesis on GPUs](https://arxiv.org/abs/2608.05033v3) · [论文 PDF](https://arxiv.org/pdf/2608.05033v3)。作者：Shiyang Li、Guangyan Sun、Jinwei Tang、Yanzhi Wang、Mingyi Hong、Caiwen Ding。本文所用论文原图归原作者所有，按原文 CC BY-NC-SA 4.0 许可引用；仅转换展示格式，未修改图中数据。
+
+## 1. 稀疏编译为什么需要同时决定表示与调度
+
+密集 GEMM 的矩阵维度通常足以确定主要计算规模。稀疏计算还取决于非零元素的位置：同样的行数和非零数量，均匀短行、少数超长行、对角带状结构和幂律图，可能需要完全不同的工作划分。
+
+只说“使用 CSR”并不能完整描述实现。CSR 可以一线程一行、一 warp 一行，也可以把非零流切成等长块，再通过分段归约处理行边界。前两种方式容易直接写出结果，却继承了行长不均衡；后一种更容易平衡工作量，但需要额外归约和跨块合并。
+
+<PaperFigure src={fig1a} pdf="papers/sparseditto/fig01a-design-space.pdf" alt="SparseDitto 的稀疏表示、执行调度与硬件映射设计空间" caption="原论文图 1(a)：稀疏优化空间包含相互关联的表示、调度和硬件选择。" />
+
+### 1.1 三类算子的工作量不同
+
+**SpMV：稀疏矩阵乘向量。** 每个非零元素贡献一次乘法和一次加法：
+
+<Equation tex={String.raw`y_i=\sum_{k\in\operatorname{supp}(A_{i,:})} A_{ik}x_k.`} />
+
+每个非零只有 2 FLOPs，却要读取数值、列索引和间接寻址的向量元素。元数据流量、对 x 的访问局部性、线程间负载均衡往往比算术吞吐更重要。
+
+**SpMM：稀疏矩阵乘密集矩阵。** B 的列数为 K，一个非零元素参与 K 次乘加：
+
+<Equation tex={String.raw`C_{ij}=\sum_{k\in\operatorname{supp}(A_{i,:})} A_{ik}B_{kj},\qquad 0\le j<K.`} />
+
+K 引入了额外的并行与复用维度。一个 warp 可以分摊输出列，用寄存器保存 C 的局部结果；也可以让多个稀疏行复用共享内存中的 B。块内非零足够密集时，Tensor Core 可能有效，但必须承担重排、补零和 fragment 映射成本。
+
+**SpGEMM：两个稀疏矩阵相乘。** 输出的列索引也需要计算。对输出行 i，行式算法遍历 A 中每个非零对应的 B 行，产生的中间乘积数为：
+
+<Equation tex={String.raw`u_B(i)=\sum_{k\in\operatorname{supp}(A_{i,:})}\operatorname{nnz}(B_{k,:}).`} />
+
+这里的 u 是**合并重复输出列之前的工作量**，也给出输出行非零数的上界。例如两个被访问的 B 行分别有 3、4 个非零，会产生 7 个乘积；若若干列索引重合，输出可能只有 5 个非零。线程要完成这 7 次乘加，还要把重复列合并。
+
+因此，SpGEMM 除了输入遍历，还必须选择 dense、hash、sorted-merge 或 hybrid accumulator，并处理输出计数、空间分配和压缩。
+
+### 1.2 同一个矩阵换表示，会改变实际执行的工作
+
+<PaperFigure src={fig2} pdf="papers/sparseditto/fig02-sparse-formats.pdf" alt="同一 16×16 稀疏矩阵在 CSR、CSC、SELL 和 BSR 下的工作分布" caption="原论文图 2：高列度、空行、不均匀行长和局部稠密块，经过不同表示后形成不同粒度与数量的工作。" />
+
+图中 CSR/CSC 分别按行和列压缩；SELL 将行分片，在片内补齐；BSR 把占用的块存成稠密小矩阵。SELL 的 slice height 同时决定补零开销和线程组织，BSR 的 block size 同时改变索引流量、无效算术量和片上资源需求。表示与调度不能独立优化。
+
+论文用 10 个 SuiteSparse 矩阵做动机实验，固定 RTX PRO 6000、CUDA 13.0，观察到：
+
+| 选择 | 有利条件与结果 | 不匹配时的代价 |
+| --- | --- | --- |
+| SELL-C | stencil 的片内补零仅 0.08%，最高 1.47 倍加速 | 行长不均使存储膨胀 30 倍，性能慢 33 倍 |
+| BSR | 占用的 16×16 块有 87% 非零，达到 1.25 倍 | 幂律图块内大量为零，降至 0.04 倍 |
+| COO | 非零级划分适应不均衡，SpMM 的 30 种配置中赢得 21 种，最高 2.8 倍 | 规则输入仍需显式行索引和归约 |
+| Blocked-ELL | 块内密集时支持 Tensor Core | 块行统一补齐可能使传输字节数增加两个数量级 |
+
+<PaperFigure src={fig3} pdf="papers/sparseditto/fig03-performance-sensitivity.pdf" alt="十个矩阵上不同稀疏实现与专用系统的性能差异" caption="原论文图 3：上方比较 cuSPARSE 内不同表示的完整实现，下方比较专用系统及 SparseTIR。图中的格式名称同时隐含了对应 kernel 的调度。" />
+
+整个扫描中，相对 CSR 选对实现最多获得 2.8 倍，选错却可能慢 350 倍。引言给出的具体例子是约 35.5 万非零的矩阵：CSR 的 SpMM 为 37 μs，Blocked-ELL 却需 13 ms。对这种任务，避免性能骤降和寻找最优点同样重要。
+
+### 1.3 现有系统的覆盖范围
+
+CB-SpMV 采用适应性块格式，DTC-SpMM 围绕 Tensor Core 组织块状数据，HSMU-SpGEMM 使用共享内存 hash，SparseTIR 提供格式分解与调度能力。它们分别覆盖了重要区域，但各自依赖的结构条件不同。
+
+在上述 **10 矩阵动机实验**中，CB-SpMV 在块工作集有利于缓存时达到 1.7～2.5 倍，但在超过 300 万非零的矩阵上均落后，最低 0.32 倍。DTC-SpMM 在块结构上最高 3.1 倍，且比 cuSPARSE 的补零 Tensor Core 格式快 26～106 倍；极端行不均衡时又会降至 0.04 倍。HSMU-SpGEMM 在 10 个矩阵中赢 3 个、输 7 个。
+
+SparseTIR 在 30 个 SpMM 配置中赢 25 个，几何平均 1.40 倍、最高 5.0 倍，但在长行串行化严重的矩阵上仍只有 0.13～0.20 倍。它可以表达分桶混合布局，具体格式重写与调度仍需要开发者提供。论文比较的发布实现覆盖 K=32、128、256 的 SpMM，未覆盖 SpMV 和 SpGEMM。
+
+硬件变化也会移动这些适用区域。例如 DTC-SpMM 原工作在 RTX 4090 上报告超过 1.5 倍；SparseDitto 作者运行其发布实现，在 Blackwell/CUDA 13.0 上测得各 K 均低于 cuSPARSE。这应理解为指定平台、版本和工作负载下的测量，不能直接推广为该方法在所有 GPU 上都无效。
+
+## 2. 编译计划是整个系统的中间对象
+
+对任务〈X, o, H〉，X 是稀疏输入，o 是算子，H 是目标 GPU。SparseDitto 定义：
+
+<Equation tex={String.raw`\Pi=\langle R,S,\theta_H\rangle,\qquad R=\langle L,I\rangle,\qquad S=\langle P,D\rangle.`} />
+
+| 字段 | 要确定的内容 | 例子 |
+| --- | --- | --- |
+| L：layout | 数值的物理布局 | CSR、SELL、BSR、打包列窗口 |
+| I：metadata | 支持遍历的索引与描述符 | 行指针、slice offset、行重排、窗口描述符 |
+| P：parallel decomposition | 工作映射给谁 | 一 warp 一行、非零分块、一 CTA 一行窗口 |
+| D：dataflow | 操作数如何搬运、结果如何累加 | B 放共享内存、C 留寄存器、hash 累加、atomic 合并 |
+| θH：hardware mapping | 目标 GPU 的具体参数 | block size、warp 数、K tile、共享内存大小 |
+
+<PaperFigure src={fig1b} pdf="papers/sparseditto/fig01b-workflow.pdf" alt="SparseDitto 从任务输入、结构分析到生成和评测的流程" caption="原论文图 1(b)：从任务到专门化实现的整体流程。" />
+
+<PaperFigure src={fig4} pdf="papers/sparseditto/fig04-system-overview.pdf" alt="结构分析、能量模型、架构感知计划合成与 agentic lowering 的闭环" caption="原论文图 4：结构分析和学习模型引导计划生成，目标 GPU 上的验证与 profiling 反馈到计划。" />
+
+流程分成四步：扫描结构并估计表示开销；排序已有优化模板；结合硬件生成完整计划；生成 CUDA、验证并测量，再修改计划。**模板排名只提供先验，最终选择由正确性与真实延迟决定。**
+
+## 3. 36 维特征：把稀疏模式转成可操作的信息
+
+论文将连续结构特征分成三组：
+
+<Equation tex={String.raw`\Phi(X,o)=\langle\Phi_{\mathrm{intr}},\Phi_{\mathrm{repr}},\Phi_{\mathrm{op}}\rangle,\qquad 36=18+8+10.`} />
+
+此外还有行长形状类别、算子类别，以及 SpMM 的 log₂K。GPU 的 SM 数、缓存字节容量和每 CTA 资源上限单独记录，不算入这 36 维。
+
+### 3.1 18 个输入结构特征
+
+令 rᵢ 为第 i 行的非零数。行长变异系数 CV 是标准差除以均值，用于区分“平均很短但少数极长”和“各行都很短”。
+
+| 信号 | 对应特征（按附录图中的名称整理） | 帮助判断的问题 |
+| --- | --- | --- |
+| 规模 | density、nnz、rows | 工作集和总工作量有多大 |
+| 行长 | avg row len、max row len、row CV、row p25、row p75、empty rows | 是否适合统一行映射，是否需要切分或分桶 |
+| 列度 | avg col deg、max col deg、col CV | 列方向复用与行列不对称程度 |
+| 局部性 | bandwidth、bw ratio、col gap、diag dom | 列访问是否集中，是否适合列窗口 |
+| 块结构 | tile cover、tile nnz share | 密集局部块能覆盖多少区域和非零 |
+
+bandwidth 在这里是行内列索引跨度，bw ratio 是归一化跨度，不是 DRAM 带宽。diag dom 对应论文描述的对角项结构信号，不应自行解释为按数值大小验证的严格对角占优条件。
+
+行长分布还分成 uniform、moderate、skewed、power-law、bimodal 五类，作为类别输入。
+
+### 3.2 8 个表示特征：规则化要多付多少成本
+
+ELL 把每行补到全局最长行，SELL 只在 slice 内补齐，BSR 把占用块存成完整稠密块。存储数值槽位相对原始非零数的膨胀分别是：
+
+<Equation tex={String.raw`\begin{aligned}
+\rho_{\mathrm{ELL}}&=\frac{m\max_i r_i}{\operatorname{nnz}(X)},\\
+\rho_{\mathrm{SELL}}(c)&=\frac{\sum_s |s|\max_{i\in s}r_i}{\operatorname{nnz}(X)},\\
+\rho_{\mathrm{BSR}}(b)&=\frac{b^2\operatorname{nnzb}_b}{\operatorname{nnz}(X)}.
+\end{aligned}`} />
+
+s 是一个行片，nnzb 是占用块数。若所有行都有 6 个非零，ELL 的膨胀为 1；若平均 3.7、最长 646，补到最长行就会浪费大部分槽位。BSR 即使减少了索引，也可能同时增加大量无效数值读取与计算。
+
+模型涉及 ELL、SELL 的 16/32/512 三个 slice height、BSR 的 4/8/16 三个 block size。正文这里只列出七种配置；附录完整特征图还列出 **16×16 fill**，构成八个表示特征。图中的 BSR 标签使用 fill，正文公式使用 expansion，二者都描述占用块中的有效非零与完整槽位之间的关系，不能把图示标签直接当作已明确给出的预处理公式。
+
+内存估算还需要加上 slice offsets、块列索引和必要的行重排信息。改变布局、元数据或格式参数之后，这些开销必须重新计算。
+
+### 3.3 10 个算子特征：SpGEMM 的中间工作
+
+仅靠 A 的行长不能确定 A×B 的代价。一个很短的 A 行如果命中 B 的超长行，也可能生成大量乘积。论文记录：
+
+- 请求乘积的 uB：总量、最大值、p95、CV，共 4 项。
+- B=Xᵀ 时的中间工作：总量和 CV，共 2 项。
+- 三种容量下能容纳的行比例，共 3 项。
+- 中间乘积到输出非零的压缩比，共 1 项。
+
+容量适配比例为：
+
+<Equation tex={String.raw`F_h=\frac{1}{m}\sum_i\mathbf{1}[u_B(i)\le h],\qquad h\in\{512,4096,32768\}.`} />
+
+Fh 反映不同 accumulator 容量能覆盖多少行。平均工作量相同的两个矩阵，可能一个所有行都能放入小表，另一个必须为少数极大行建立独立路径。
+
+压缩比为：
+
+<Equation tex={String.raw`\gamma_B=\frac{\sum_i u_B(i)}{\operatorname{nnz}(C)}.`} />
+
+它表示平均每个输出非零需要合并多少中间乘积。论文用受 MatRaptor 数据流分析启发的分层采样估计相关量；这里不能假定必须先完整计算 C 才能运行分析。
+
+## 4. 用可解释能量模型排序优化模板
+
+这里的 energy 是**排序分数**，越低越推荐，与 GPU 功耗或耗能无关。
+
+### 4.1 模板集合覆盖哪些实现族
+
+| 算子 | 模板集合 Vo |
+| --- | --- |
+| SpMV | CSR、COO、SELL-16/32/512、BSR-4/8/16、自适应二维块 |
+| SpMM | CSR、COO、BSR-4/8/16、Blocked-ELL-16/32、DTC Tensor Core 设计 |
+| SpGEMM | CSR-hash、共享内存 tiled hash、hybrid accumulation |
+
+模板描述粗粒度机制，尚未确定完整布局、线程映射和硬件参数。后面的合成可以组合、细化这些机制，也可以产生模板名称无法完整概括的计划。
+
+### 4.2 加性模型如何给出分数
+
+输入 x 拼接 36 个结构特征、形状 one-hot、算子标识，以及 SpMM 的 log₂K。每个标量坐标先映射到 16 维非线性基：
+
+<Equation tex={String.raw`h_j(x_j)=\tanh(x_jw_{1j}+b_{1j})\in\mathbb{R}^{16}.`} />
+
+不同算子共享这层基函数，再使用各自针对模板的 readout：
+
+<Equation tex={String.raw`E_o(s\mid x)=\beta_{o,s}+\sum_j h_j(x_j)^{\mathsf T}w_{2,o,j,s}.`} />
+
+这样，同一个特征可以在 SpMV 和 SpGEMM 中产生不同作用。tanh 能表达阈值附近的非线性响应，例如 SELL 补零超过某个区域之后，分数明显变差；同时，每个特征对最终分数的贡献可以直接拆出并交给计划合成。
+
+加性结构的代价是没有显式的多特征交互项。把列跨度与工作集大小共同决定的复杂效应交给后续合成和测量，有助于理解它为什么只承担“排序先验”的角色。
+
+### 4.3 训练目标同时关心排名与选错的损失
+
+对实际测量过的模板集合 M，标签是相对基线的 log₂ 加速比：
+
+<Equation tex={String.raw`t_s=\log_2\frac{\text{baseline runtime}}{\text{runtime of }s},\qquad M\subseteq V_o.`} />
+
+未测量模板不应当作负样本。预测概率与软标签都只在 M 内归一化：
+
+<Equation tex={String.raw`p_o(s\mid x)=\operatorname{softmax}_{s\in M}(-E_o(s\mid x)),\qquad q_s=\operatorname{softmax}_{s\in M}(t_s/T).`} />
+
+温度 T 调节软标签的集中程度。完整损失由 listwise 和按速度差加权的 pairwise 两部分组成：
+
+<Equation tex={String.raw`\begin{aligned}
+\mathcal L_o=\sum_{(x,\mathbf t)}\Bigg[
+&-\sum_{s\in M}q_s\log p_o(s\mid x)\\
+&+\lambda_o\!\!\sum_{\substack{s,s'\in M\\t_s>t_{s'}}}
+(t_s-t_{s'})\operatorname{softplus}
+\big(E_o(s\mid x)-E_o(s'\mid x)\big)
+\Bigg].
+\end{aligned}`} />
+
+第一项让多个接近最优的方案都能获得较高推荐。第二项在 s 确实更快时，惩罚把 s 排得更差；两者速度差越大，惩罚越重。比如把 1.9 倍误排在 2.0 倍之前，通常比把 0.1 倍排在 2.0 倍之前更可接受。
+
+SpMV 模板性能较接近，使用较小的 λo；SpMM 和 SpGEMM 的速度差更大，权重也更大。论文没有在正文中给出可以直接复用的完整训练超参数配置，不宜据此宣称模型训练已能一键复现。
+
+## 5. 架构感知合成：从模板走到可执行计划
+
+### 5.1 先算工作集，再讨论缓存与并行
+
+表示占用由数值槽位和元数据组成，单位统一为字节：
+
+<Equation tex={String.raw`M_{\mathrm{rep}}(\Pi)=M_{\mathrm{value}}(L)+M_{\mathrm{meta}}(I).`} />
+
+设 W 为数据流引入的临时存储，DR 和 DS 为公共输入、输出操作数的大小：
+
+<Equation tex={String.raw`\begin{aligned}
+M_R(\Pi)&=M_{\mathrm{rep}}(\Pi)+W(\Pi)+D_R,\\
+M_T(\Pi)&=M_R(\Pi)+D_S.
+\end{aligned}`} />
+
+对 SpMM，要计入密集 B、C；对 SpGEMM，要计入 accumulator 和中间表示。与物理 L2 容量比较：
+
+<Equation tex={String.raw`q_R(\Pi)=\frac{M_R(\Pi)}{C_{\mathrm{L2}}},\qquad q_T(\Pi)=\frac{M_T(\Pi)}{C_{\mathrm{L2}}},\qquad \text{work units per SM}=\frac{N_{\mathrm{work}}(\Pi)}{N_{\mathrm{SM}}}.`} />
+
+这些量只能提供尺度信息。工作集小于 L2 不等于一定驻留，工作单元很多也不等于 achieved occupancy 很高。访问顺序、竞争、寄存器压力以及生成代码都会改变实际结果，仍须在目标 GPU 上测量。
+
+### 5.2 联合确定表示、数据流与资源
+
+SELL 的行切片必须配合 slice offsets 和 slice-parallel 调度；SpGEMM 的 hash 设计必须同时确定行分桶、表容量和溢出路径。随后才能设置线程数、tile 和片上存储。
+
+若每 CTA 线程数为 Bt，每线程寄存器数为 rt，共享内存为 St，合法映射至少要满足：
+
+<Equation tex={String.raw`B_t\le T_{\max},\qquad r_tB_t\le R_{\max},\qquad S_t\le S_{\max}.`} />
+
+线程和共享内存请求在 lowering 前检查，寄存器数在 nvcc 编译后读取。合法只是必要条件：恰好接近资源上限的 CTA 可能严重限制驻留数量，也可能因为减少访存而更快，无法仅凭这些不等式判断。
+
+附录将可组合的机制展开如下，强调这是设计空间而非固定 kernel 列表：
+
+| 算子 | 表示与元数据 | 并行划分 | 数据流 | 硬件参数 |
+| --- | --- | --- | --- | --- |
+| SpMV | CSR/COO/ELL/SELL/BSR、自适应 16×16 tile；行指针、slice offset、块索引、行置换、tile 描述符 | 一线程/warp/CTA 一行；merge-path 等非零分块；slice/block 并行；循环行分配 | 直接写 y；分段归约；atomic；只读/texture cache；x 的窗口暂存 | 每 CTA 行数/非零数、slice height、block size、线程数、列窗口、unroll |
+| SpMM | CSR/COO/BSR/Blocked-ELL、打包列窗口、自适应 tile；行块索引、窗口和 fragment 映射 | 稀疏行/非零/块与 K tile 组合；一 warp 一行窗口；行×K 两级切分 | 密集行复用；寄存器或共享内存累加；B 暂存而 C 留寄存器；SIMT/mma；稀疏流双缓冲 | K tile、块形状、warp 数、暂存大小、fragment layout、双缓冲深度 |
+| SpGEMM | CSR、重排行、tiled input、显式转置；上界分桶、中间计数、tile 指针 | 按预期输出工作分桶；一 warp/CTA 一行；tile 并行；symbolic/numeric 分阶段 | dense/hash/merge/hybrid；桶内片上累加；超大行全局 spill；prefix sum 压缩 | hash 容量、dense stripe 宽度、桶阈值、每行线程数、共享内存 |
+
+### 5.3 e40r0100：怎样从统计量得到列窗口设计
+
+<PaperFigure src={fig5} pdf="papers/sparseditto/fig05-plan-synthesis.pdf" alt="Shen/e40r0100 的统计特征与 SpGEMM 列窗口计划合成" caption="原论文图 5：在 RTX PRO 6000 上为 e40r0100 的 A² 合成计划。图中的结构分析需要结合中间乘积数量与完整工作集解释。" />
+
+该矩阵为 17,281×17,281，有 553,562 个非零，最长行 62，16×16 占用块数为 20,130。代入表示膨胀公式：
+
+<Equation tex={String.raw`\rho_{\mathrm{ELL}}=\frac{17281\times62}{553562}\approx1.9,\qquad \rho_{\mathrm{BSR}}(16)=\frac{16^2\times20130}{553562}\approx9.3.`} />
+
+每个占用 tile 平均只有 27.5 个非零，占 256 个位置的约 10.7%；占用 tile 约为所有 tile 的 1.7%。这里必须区分“有多少 tile 被占用”和“占用 tile 内有多密”。直接变成稠密块会引入明显补零。
+
+FP32 数值和 32 位索引下，CSR 输入本身占：
+
+<Equation tex={String.raw`M_{\mathrm{CSR}}=8\times553562+4\times(17281+1)=4{,}497{,}624\ \text{bytes}\approx4.29\ \text{MiB}.`} />
+
+论文写作 4.29 MB，按二进制换算是 MiB。这个数解释了图中与 128 MB L2 容量的尺度比较，但它还不是包含 workspace 和输出的完整工作集。
+
+各行中间乘积数量从 102 到 2,187。结合对角局部性，系统生成打包列窗口设计：窗口宽 4,096，对应 5 个输出列带；每个 row–window pair 分配一个 256 线程 CTA。这样既保留列方向局部性，又避免完整稠密块的补零。
+
+4,096 和 256 是合成出的参数，不是由某个特征代入闭式公式必然得到的最优解。该案例的作用是展示从结构证据到计划的推理过程，实际优劣仍由 lowering 后的评测判断。
+
+## 6. CUDA 生成与测量反馈怎样形成闭环
+
+系统提供 CSR、COO、ELL、SELL、BSR 的转换和元数据工具，也提供受 CB-SpMV 启发的自适应 16×16 块、参考 Sextans 的列窗口，以及 SpGEMM 的工作上界分析与行分桶。扫描和 workspace 管理沿用 MatRaptor 式行数据流思路。
+
+coding agent 在统一 harness 中实现计划指定的线程映射、accumulator 和硬件参数，执行 nvcc 编译、sanitizer/运行检查、数值验证、延迟测试及 NCU profiling。反馈按问题来源映射回计划字段：
+
+| 实测问题 | 优先修改的计划部分 |
+| --- | --- |
+| 补零或元数据流量过多 | L、I：布局与索引表示 |
+| 负载失衡、同步开销 | P：并行分解 |
+| 缓存行为差、临时空间流量大 | D：数据流 |
+| 寄存器、共享内存压力大 | θH：tile、launch、资源分配 |
+
+这意味着一次迭代可以重选工作划分或数据表示，再重新生成代码，而不只是调整 block size。
+
+作者报告计划合成、CUDA lowering 和验证使用相同模型 **GPT-5.6-terra**，reasoning effort 为 low，每次调用预算 8,192 tokens。每个任务启动 3 个计划分支，各最多 5 轮；最快的 2 个有效分支各追加最多 5 轮，因此预算上限是 **25 轮 lowering–evaluation**。
+
+最终保留所有分支中最快且数值正确的实现，缓存键包括稀疏模式、算子、目标平台，SpMM 还包括 K。同一模式上的新数值或新密集输入可复用实现；改变稀疏模式、K 或 GPU 后，不能假定原结果仍适用。
+
+## 7. 实验口径：加速比具体包含什么
+
+### 7.1 矩阵、平台和基线
+
+主实验使用 60 个 SuiteSparse 矩阵，涵盖 stencil、有限元、电路与过程仿真、幂律网页图、道路网络和基因网络。矩阵从 359 到 16,777,216 行，非零从 817 到约 1.01 亿；平均行长从 1.0 到 1,107.1，CV 从 0 到 12.2。完整名单见文末。
+
+每个矩阵测 SpMV、K∈{8,32,128,256} 的 SpMM，以及 SpGEMM。SpGEMM 对方阵算 AA，非方阵算 AAᵀ。7 个大矩阵上 cuSPARSE SpGEMM 出现 out-of-resources，相应任务从 cuSPARSE 对比中排除。
+
+两个平台分别是 RTX PRO 6000 Blackwell/CUDA 13.0 和 H200 Hopper/CUDA 12.9。cuSPARSE 基线采用同一数值契约下所有适用算法中最快的有效配置；其他系统仅比较其发布 artifact 支持的任务，不能把不同支持集合上的均值简单相除来替代配对比较。
+
+### 7.2 数值正确性
+
+SpMV、SpMM 逐输出元素检查：
+
+<Equation tex={String.raw`\left|\widehat y_i-y_i^{\mathrm{ref}}\right|\le10^{-5}+10^{-3}\left|y_i^{\mathrm{ref}}\right|.`} />
+
+输入值与 FP32 cuSPARSE 相同。运行错误、异常 NaN/Inf 或任意元素超差均判失败。
+
+SpGEMM 还先对每行列索引排序、合并重复项，然后要求输出维度、非零数、行指针和列索引完全一致，数值再通过同一误差界限。它验证的是结构与容差内的数值等价，不是浮点结果逐 bit 相同。
+
+### 7.3 计时和聚合
+
+CUDA events 计时，每个实现预热 5 次、测量 10 次，取算术平均。**一次性预处理和实现生成时间不计入 kernel 延迟。** 跨任务加速比取几何平均，置信区间由 log-speedup 的 20,000 次任务级 bootstrap 得到。
+
+几何平均意味着每个任务贡献一个加速比，不按矩阵执行时长加权。因此“整体 2.68 倍”不能直接解释为某个生产工作负载的总耗时缩短到 1/2.68；需要按实际调用频率与耗时重新计算。
+
+## 8. 双 GPU 性能结果与专用系统比较
+
+<PaperFigure src={fig6} pdf="papers/sparseditto/fig06-blackwell-speedups.pdf" alt="RTX PRO 6000 上各算子几何平均加速和逐矩阵分布" caption="原论文图 6：Blackwell 上的加速比。误差线是任务级 95% bootstrap 区间，下方分布采用对数尺度。" />
+
+<PaperFigure src={fig7} pdf="papers/sparseditto/fig07-h200-speedups.pdf" alt="H200 上各算子几何平均加速和逐矩阵分布" caption="原论文图 7：换成 H200 后读取新设备参数并重新生成全部实现，图示口径与图 6 相同。" />
+
+| 算子/配置 | RTX PRO 6000：相对 cuSPARSE | H200：相对 cuSPARSE |
+| --- | --- | --- |
+| SpMV | 2.53× | 2.68× |
+| SpMM，K=8 | 4.46× | 4.18× |
+| SpMM，K=32 | 2.81× | 2.81× |
+| SpMM，K=128 | 1.92× | 1.96× |
+| SpMM，K=256 | 1.68× | 1.87× |
+| SpGEMM | 3.70× | 4.09× |
+| 全部有效任务 | 2.68×，95% CI [2.48, 2.89] | 2.79×，95% CI [2.61, 2.99] |
+
+SpMM 在小 K 上收益最大，K 增大后优势收窄。Blackwell 上，K=8 的四分位范围为 3.28～5.57 倍，K=256 收缩到 1.27～2.22 倍。图中 K=8、32 的 SpMM 分布在两块 GPU 上均高于 cuSPARSE。
+
+SpGEMM 分布最宽，Blackwell 和 H200 的最大值分别为 146.61 倍和 78.5 倍。极值与其对中间乘积、累加器和输出组织的敏感性相符，但不能代表典型任务；正文个别句子的括号位置有歧义，此处按后续明确列出的双平台最大值区分。
+
+### 8.1 SpMV：CB-SpMV 与 AlphaSparse
+
+CB-SpMV 相对 cuSPARSE 在 Blackwell/H200 上分别为 1.35/1.70 倍；在配对输入上，SparseDitto 相对 CB-SpMV 为 1.91/1.57 倍。
+
+AlphaSparse 每矩阵给 9 小时搜索预算，仅在 13 个矩阵上产生通过该论文统一验证规则的 kernel，其余运行崩溃或数值超差。在这 13 个矩阵上 SparseDitto 快 5.34 倍。这是有效子集上的比较，不是 60 个矩阵都成功后的平均。
+
+### 8.2 SpMM：SparseTIR 与 DTC-SpMM
+
+Blackwell 上，SparseTIR 在 K=32 时相对 cuSPARSE 为 1.68 倍，K=128、256 均为 1.18 倍。DTC-SpMM 在 K=8、32、128、256 上分别为 0.73、0.62、0.58、0.58 倍。
+
+配对任务上，SparseDitto 相对 SparseTIR 为 Blackwell 1.57 倍、H200 1.63 倍；相对 DTC-SpMM 为 3.99 倍、4.32 倍。
+
+### 8.3 SpGEMM：HSMU-SpGEMM
+
+HSMU 在其支持的方阵上相对 cuSPARSE 为 Blackwell 0.74 倍、H200 0.32 倍。对应输入上 SparseDitto 分别快 5.37 倍和 13.60 倍，并额外支持 HSMU 不覆盖的非方阵任务。
+
+## 9. Profiling：更高命中率并不自动带来更快执行
+
+作者在 Blackwell 上用 Nsight Compute 分析获胜实现及基线，replay 时清缓存、锁定 base clocks。多 kernel 计算阶段汇总所有 launch 的 sector 计数。
+
+下表 ΔL1、ΔL2 是命中率的**百分点差**；其余均是 SparseDitto/对方的比例。req 表示每次算子调用的 sector 请求数，BW 表示实测 DRAM 带宽，不能与传输总字节数混为一谈。
+
+| 对比对象 | ΔL1 | L1 req | ΔL2 | L2 req | Achieved occupancy | DRAM BW |
+| --- | --- | --- | --- | --- | --- | --- |
+| cuSPARSE | +4.7 | 1.09× | +3.6 | 0.77× | 1.96× | 1.98× |
+| CB-SpMV | +1.6 | 0.63× | −7.3 | 0.57× | 0.93× | 1.03× |
+| SparseTIR | −18.6 | 0.85× | −2.2 | 1.03× | 1.24× | 1.80× |
+| DTC-SpMM | −5.1 | 1.44× | −1.3 | 1.13× | 3.21× | 5.03× |
+| HSMU-SpGEMM | −16.3 | 0.83× | +1.5 | 0.97× | 0.88× | 4.25× |
+
+相对 cuSPARSE，L1 请求略多、L2 请求更少，occupancy 和带宽都约翻倍。SpMM 各 K 的 L1 命中率中位数提升 8～17 个百分点；SpGEMM 的变化主要出现在 L2。
+
+但相对 CB-SpMV，L2 命中率反而低 7.3 个百分点，同时 L2 请求只有 0.57 倍。命中率是比例，减少请求总量可能比提高命中比例更有价值。
+
+相对 HSMU，SparseDitto 的 occupancy 只有 0.88 倍，却达到 4.25 倍 DRAM 带宽。被 profile 的 SpGEMM 执行使用 5 个 kernel，HSMU 为 24 个；更少阶段可减少 launch 和跨 kernel 依赖。
+
+DTC-SpMM 的 16×8 tile 在这些矩阵上的非零占用中位数只有 10.1%，Tensor Core 管线仅达峰值的 1.5%。虽然搬运的数据略少，大量补零和较低 warp occupancy 仍限制性能。SparseDitto 相对它的优势随 K 从 8 增至 256，由 6.40 倍降至 2.89 倍。
+
+这些观测支持把请求量、有效计算、并行度和阶段数一起分析。单个 hit rate、occupancy 或 Tensor Core 使用标志，都不足以解释最终时间。
+
+## 10. 消融：结构分析和计划合成分别带来什么
+
+| 配置 | SpMV | SpMM | SpGEMM |
+| --- | --- | --- | --- |
+| 通用 CUDA agent 框架 StitchCUDA | 1.53× | 1.76× | 0.86× |
+| Learned Model + Agentic Lowering | 1.93× | 2.02× | 1.22× |
+| 再加入 Pattern Analysis | 2.27× | 2.28× | 2.24× |
+| 再加入 Architecture-aware Synthesis | 2.53× | 2.52× | 3.70× |
+
+这里是 Blackwell 上相对 cuSPARSE 的几何平均，SpMM 汇总多个 K。
+
+SpGEMM 的提升最明显：加入结构分析后由 1.22 到 2.24 倍，再加入完整计划合成到 3.70 倍。这与它依赖中间乘积、输出构造和 accumulator 的特点一致。SpMV 和 SpMM 也逐步改善。
+
+消融说明在相同生成预算下，稀疏专用信息与联合计划有实际价值；它没有把每一个特征、工具或提示词单独隔离，因此不能进一步给某个局部机制分配精确的因果贡献。
+
+## 11. 排序模型究竟有多准确
+
+### 11.1 数据集、训练成本与指标
+
+离线排序语料包含 400 个 SuiteSparse 矩阵及模板实测时间，与主 kernel 实验的 60 个矩阵不重叠。交叉验证按矩阵分组、按 shape 分层，采用 5 folds、5 seeds。这样同一矩阵的不同算子或 K 不会被分到训练和验证两侧。附录另提到保留 100 矩阵测试集、不用于调参，但下表给出的是交叉验证结果，未单列该测试集的指标。
+
+模型仅 15.9K 参数，600 epochs 在单张 RTX PRO 6000 或 H200 上约 2 秒，模板排序远低于 1 微秒。这个成本不包含采集 400 个矩阵的模板测量数据。
+
+| 指标 | 含义 |
+| --- | --- |
+| Top-1，越大越好 | 首选是否恰好为实测最快模板 |
+| Regret，越小越好 | 首选相对每输入 oracle 的几何平均 slowdown |
+| Capture，越大越好 | 实现了 oracle 加速的多少比例 |
+| Cliff，越小越好 | 首选比 CSR 基线慢超过 2 倍的输入比例 |
+
+Top-1 不直接等于性能质量。把两个几乎一样快的模板排反，Top-1 会扣分，却可能没有明显运行代价。Regret/Capture 更能反映这种区别；表中聚合值也不应自行当作互为倒数。
+
+### 11.2 完整排名结果
+
+为避免过宽，原附录表按算子展开：
+
+| 算子 | 模型 | Top-1 | Regret | Capture |
+| --- | --- | --- | --- | --- |
+| SpMV | MLP | 0.805 | 1.03 | 95% |
+| SpMV | GBDT | 0.793 | 1.03 | 96% |
+| SpMV | Energy，仅 listwise | 0.797 | 1.03 | 96% |
+| SpMV | Energy，完整损失 | 0.797 | 1.03 | 96% |
+| SpMM | MLP | 0.715 | 1.17 | 76% |
+| SpMM | GBDT | 0.716 | 1.09 | 87% |
+| SpMM | Energy，仅 listwise | 0.716 | 1.14 | 80% |
+| SpMM | Energy，完整损失 | 0.719 | 1.13 | 81% |
+| SpGEMM | MLP | 0.681 | 1.37 | 76% |
+| SpGEMM | GBDT | 0.713 | 1.26 | 82% |
+| SpGEMM | Energy，仅 listwise | 0.697 | 1.34 | 78% |
+| SpGEMM | Energy，完整损失 | 0.702 | 1.32 | 79% |
+
+完整 energy 模型在 SpMM、SpGEMM 上优于 MLP；去掉 pairwise 项后略有回退。但 **GBDT 在 SpMM、SpGEMM 的 Regret 和 Capture 上更好，SpGEMM 的 Top-1 也更高**。正文笼统称优于 GBDT，与附录数值不一致，应以表格和附录解释为准。
+
+因此更稳妥的结论是：作者选择了一个性能有竞争力、能输出逐特征贡献的模型，而非取得所有排序指标最优。所有模型 Cliff 均低于 6%；energy 的 SpMV 为 0.0%、SpMM 为 0.5%，不高于 MLP。论文未在文字中给出完整的各模型 SpGEMM Cliff 数值。
+
+### 11.3 两种特征重要性回答不同问题
+
+<PaperFigure src={fig8} pdf="papers/sparseditto/fig08-permutation-importance.pdf" alt="各算子的 permutation feature importance" caption="原论文图 8：置换输入特征后模型的敏感性；数字为重要性份额，短横线表示该算子不使用该特征。" />
+
+正文采用 permutation importance：打乱某个特征在输入之间的对应关系，观察模型对这种扰动的敏感性。density、nnz、rows 在多个算子中较重要，SpMM 还依赖 K，SpGEMM 依赖中间工作上界。
+
+附录利用加性结构直接取每个特征的得分贡献：
+
+<Equation tex={String.raw`\varphi_{j,o,s}(x_j)=h_j(x_j)^{\mathsf T}w_{2,o,j,s},\qquad I_j(o)=\operatorname{std}_{s\in V_o}\varphi_{j,o,s}(\bar x_j).`} />
+
+这里固定在平均特征向量上，看该特征使不同模板的得分拉开多少，再按算子归一化为总和 1。
+
+<PaperFigure src={fig10} pdf="papers/sparseditto/fig10-model-native-importance.pdf" alt="附录中全部 36 个结构特征和 K 的模型原生重要性" caption="原论文图 10（附录）：完整 model-native importance。它描述均值参考点上的模板得分差异，与图 8 的置换敏感性不是同一个统计量。" />
+
+约 30 个特征累计贡献 90% 的 model-native importance，说明得分并非仅由一两个信号控制。但这两张图都不是因果归因，也不能据此声称删除任一特征会让最终 kernel 性能下降固定比例。
+
+## 12. 七个案例：结构和硬件怎样改变最后的 kernel
+
+前六个案例来自 Blackwell，默认相对 cuSPARSE；asia_osm 的比较对象单独标出。
+
+| 算子 | 矩阵 | 平均/最长行 | CV | Compute 时间 | 加速 |
+| --- | --- | --- | --- | --- | --- |
+| SpMV | JGD_Homology_ch7-9-b5 | 6.0 / 6 | 0.00 | 0.007 ms | 2.44× |
+| SpMV | Barabasi_NotreDame_actors | 3.7 / 646 | 2.75 | 0.013 ms | 1.94× |
+| SpMM，K=32 | Schenk_AFE_af_shell10 | 34.9 / 35 | 0.03 | 0.736 ms | 6.82× |
+| SpMM，K=128 | LAW_in-2004 | 12.2 / 7,753 | 3.04 | 1.874 ms | 1.97× |
+| SpGEMM | DIMACS10_asia_osm | 2.1 / 9 | 0.23 | 3.771 ms | 6.45×，相对 HSMU FP64 |
+| SpGEMM | DIMACS10_delaunay_n24 | 6.0 / 26 | 0.22 | 22.009 ms | 1.19× |
+
+### 12.1 均匀短行：ELL 可以省掉 slice 元数据
+
+ch7-9-b5 为 423,360×317,520，每行恰好 6 个非零，ELL 完全不用补零。最后使用 **column-major ELL + 一线程一行**：相邻线程读取相邻行的同一槽位，地址连续。
+
+排序器最初推荐 SELL-32，合成却选择 ELL，省去 slice 描述成本，达到 2.44 倍。规则性足够强时，更简单的表示和线程映射就能完成工作。
+
+### 12.2 偏斜短行：按非零分配比按行分配均衡
+
+NotreDame_actors 有 392,400 行、约 147 万非零，平均 3.7、最长 646。统一 ELL 会膨胀约两个数量级。
+
+最终采用 COO，将非零流切成等长块，一线程处理一个非零；warp 内对相同行分段归约，跨 warp 用 atomicAdd 合并。它增加了合并成本，却避免超长行让部分 warp 长时间拖尾，结果为 1.94 倍。
+
+### 12.3 近等长 SpMM：四线程协作一行
+
+af_shell10 的平均行长 34.9、最大 35，ELL 几乎没有补零。K=32 时，一个四线程组负责一行，每线程在寄存器中保存 8 个输出，通过 shuffle 分享稀疏项，并对稀疏加载做流水。
+
+行完成后一次写出结果，达到 6.82 倍。虽然排序器首推 Tensor Core 块模板，实测留下的是 CUDA core 实现。
+
+### 12.4 网页图 SpMM：短行和长行分开
+
+LAW_in-2004 平均只有 12.2 个非零，最长却达 7,753。最终短行一 warp，长行按最多 256 个非零切块，每块一 CTA，最后原子累加。
+
+该方案的 compute 时间为 1.874 ms、加速 1.97 倍，**预处理耗时 8.9 秒**且未计入。工作列表依赖稀疏结构，可以跨不同密集输入复用。下一节结合实际代码解释。
+
+### 12.5 道路网络 SpGEMM：小容量线程私有累加器
+
+asia_osm 有约 1,200 万行，平均 2.1 个非零，AA 输出约 4,280 万非零。若每行采用全宽 dense accumulator，即使只触及少量列，也要面对约 1,200 万个潜在槽位。
+
+生成计划按中间工作上界分桶：不超过 8、36 的行使用固定容量线程局部累加器；更大行走独立 traversal 路径。cuSPARSE 在此任务资源不足，6.45 倍的比较对象是 **HSMU-SpGEMM 的 FP64 build**。这个案例的精度和基线口径必须保留，不能纳入主文 FP32 cuSPARSE 加速解释。
+
+### 12.6 大输出 SpGEMM：分桶后仍要写出 3.47 亿非零
+
+delaunay_n24 有约 1,680 万行、1.007 亿非零，输出有约 3.47 亿非零。生成计划按中间工作分桶，一 warp 一行，两类桶分别使用 64、512 项共享内存 hash，随后 compaction 生成输出。
+
+最后只有 1.19 倍。分桶减少了累加器浪费，但无法消除庞大输出本身的物化流量。
+
+### 12.7 同一个矩阵，Blackwell 与 H200 选出不同实现
+
+Nemeth_nemeth26 在 K=8 时有 9,506 行，平均行长 159、CV 0.16，行带宽中位数 185、相邻列索引平均间隔 1.2。非空 16×16 tile 中稠密 tile 占 65.2%，包含 88.2% 的非零，块结构很强。
+
+两块 GPU 上结构特征与排序结果相同，首选都是 32×32 Blocked-ELL Tensor Core 模板。但 Blackwell 最终 Tensor Core 实现达到 4.57 倍，H200 则由额外探索的 SIMT block-row 实现获胜，达到 8.33 倍。
+
+计划记录中，16×16 BSR 候选含输入输出的工作集约 9.28 MiB，CSR 为 12.15 MiB；H200 物理 L2 为 50 MiB，另一窗口候选考虑 8 KiB 共享内存 tile。这些尺度帮助生成候选，但不能单独推导哪个更快。案例说明相同结构先验在不同硬件上仍需测量。
+
+## 13. 附录 CUDA 源码：LAW_in-2004，K=128
+
+附录给出了未经手动编辑的生成实现，包含 `spmm_preprocess`、`spmm_compute`、`spmm_cleanup`。<a href={withBase('papers/sparseditto/spmm-web.cu')}>完整原始 CUDA 源码</a>可直接查看；下面摘录实际执行路径。
+
+### 13.1 预处理建立两组任务
+
+CPU 读取行指针，把非零数小于 256 的行放入 `h_light_rows`，其余行切成最多 256 个非零的片段：
+
+```cpp
+const int chunk_nnz = 256;
+for (int r = 0; r < num_rows; ++r) {
+    const int begin = h_row_ptr[r];
+    const int end = h_row_ptr[r + 1];
+    const int n = end - begin;
+
+    if (n < chunk_nnz) {
+        h_light_rows.push_back(r);
+    } else {
+        for (int p = begin; p < end; p += chunk_nnz) {
+            int q = p + chunk_nnz;
+            if (q > end) q = end;
+            h_chunk_rows.push_back(r);
+            h_chunk_begin.push_back(p);
+            h_chunk_end.push_back(q);
+        }
+    }
+}
+```
+
+恰好 256 个非零也走 chunk 路径。每个 chunk 记录原始行号、起止非零位置，随后复制到 GPU；同一行可以对应多个 chunk。
+
+预处理还执行 `csr_to_windowed(..., 256, 4)` 并保留 `WindowedData`，但 compute **没有读取这份 windowed 数据**。实际执行是直接读 CSR 和 B 的混合行映射，不能因为 context 中存在列窗口表示就称其使用了共享内存窗口数据流。这也暴露了生成过程留下冗余准备工作的可能。
+
+### 13.2 短行：一个 warp 计算 128 个输出
+
+每 CTA 256 线程，即 8 个 warp，处理 8 行：
+
+```cpp
+const int tid = (int)threadIdx.x;
+const int warp = tid >> 5;
+const int lane = tid & 31;
+const int idx = (int)blockIdx.x * 8 + warp;
+```
+
+每个 lane 负责输出列 lane、lane+32、lane+64、lane+96，四个寄存器保存结果：
+
+```cpp
+float x0 = 0.0f;
+float x1 = 0.0f;
+float x2 = 0.0f;
+float x3 = 0.0f;
+
+for (int p = begin; p < end; ++p) {
+    const int col = __ldg(col_ind + p);
+    const float a = __ldg(values + p);
+    const float* bp = B + ((size_t)col << 7) + lane;
+
+    x0 = fmaf(a, __ldg(bp), x0);
+    x1 = fmaf(a, __ldg(bp + 32), x1);
+    x2 = fmaf(a, __ldg(bp + 64), x2);
+    x3 = fmaf(a, __ldg(bp + 96), x3);
+}
+
+float* cp = C + ((size_t)row << 7) + lane;
+cp[0] = x0;
+cp[32] = x1;
+cp[64] = x2;
+cp[96] = x3;
+```
+
+`col << 7` 等于 col×128。每次读取 B 时，warp 的 lane 对应连续列，访问可以合并。由于每个输出列只由一个线程计算完整归约，不需要 warp reduction 或 atomic。空行也在这一路径，四个初始零直接写出。
+
+### 13.3 长行：一个 CTA 计算一段，多个 CTA 合并
+
+长行 kernel 每 CTA 128 线程，每线程负责一个输出列；源码变量虽然叫 `lane`，这里实际范围是 0～127：
+
+```cpp
+const int lane = (int)threadIdx.x;
+const int row = chunk_rows[task];
+const int begin = chunk_begin[task];
+const int end = chunk_end[task];
+
+float s = 0.0f;
+for (int p = begin; p < end; ++p) {
+    const int col = __ldg(col_ind + p);
+    const float a = __ldg(values + p);
+    s = fmaf(a, __ldg(B + ((size_t)col << 7) + lane), s);
+}
+atomicAdd(C + ((size_t)row << 7) + lane, s);
+```
+
+最长 7,753 个非零会切成 31 个 chunk，而不是让单个 warp 处理整行。每个 chunk 对每个输出列只进行一次 atomicAdd，代价是多个 CTA 的结果合并。
+
+### 13.4 compute 的清零和执行顺序
+
+存在长行 chunk 时，compute 先对整个 C 做 `cudaMemsetAsync`，再启动短行 kernel 和 chunk kernel。所有操作使用默认 stream 0，提交顺序保证清零先完成。短行与长行集合互斥，短行直接写和长行原子累加不会针对同一行竞争。
+
+没有 chunk 时省去全局清零，短行 kernel 会写完所有行；整个矩阵没有非零时则直接清零输出。cleanup 释放 GPU 上的行列表、chunk 列表和 windowed 表示，再删除 context。
+
+源码用 `__launch_bounds__(256, 4)`、`__launch_bounds__(128, 6)` 向编译器提供 launch 与资源规划约束，它们不是实际每 SM 必定驻留 4 或 6 个 CTA 的运行保证。
+
+### 13.5 这个示例能说明什么，不能说明什么
+
+该实现的 `K` 参数被 `(void)K` 忽略，寻址和清零大小都硬编码 128。这符合固定任务专门化的定位，不能直接作为任意 K 的通用 SpMM API。
+
+计算阶段读取调用时传入的数值和 B，工作列表依赖稀疏结构，所以不是把输出结果预先算好写死。但改变行指针或列模式后，应重新建立任务数据。
+
+源码依赖 `sparse_formats.cuh`，该头文件不在此次论文源码包中，附录也未提供完整 harness。因此可以据此核对执行机制，不能把单个 `.cu` 文件当作独立可复现工程。特别是 8.9 秒预处理与未使用的 windowed 数据，说明验证 kernel 延迟之外还要检查准备阶段的实现质量。
+
+## 14. GCN 端到端收益与一次性成本
+
+### 14.1 Reddit 全图 GCN
+
+作者将生成的聚合 kernel 接入两层 full-batch GCN，使用无权对称邻接矩阵，扫描 K=8、32、128、256。每 epoch 前向和反向各两次聚合，共 4 次；邻接对称使反向可以复用对应前向 kernel。
+
+每个图和 K 只生成一次实现，可跨 epoch 和训练运行复用。节点特征、模型参数变化不改变图结构，因此不需要重新生成。计时预热 10 epochs，再测 100 epochs，仅替换稀疏聚合部分。
+
+<PaperFigure src={fig9} pdf="papers/sparseditto/fig09-gcn-training.pdf" alt="Reddit GCN 在四种隐藏宽度下的完整 epoch 时间及聚合时间" caption="原论文图 9：柱高为完整 epoch 时间，柱内横线为 SpMM 时间；标注为相对 cuSPARSE 的端到端加速。" />
+
+| K | SparseDitto 端到端加速 | 论文给出的 epoch 时间 | DTC-SpMM 端到端加速 |
+| --- | --- | --- | --- |
+| 8 | 3.39× | 24.6 → 7.3 ms | 约 1.00× |
+| 32 | 1.87× | 25.2 → 13.5 ms | 0.94× |
+| 128 | 1.01× | 见图 9 | 0.77× |
+| 256 | 1.14× | 见图 9 | 0.83× |
+
+表中时间经过舍入，3.39 倍沿用原论文报告值。相对 DTC-SpMM，SparseDitto 在这些宽度下快 1.31～3.38 倍。
+
+K=128 时端到端只有 1.01 倍，说明主基准中的平均 kernel 提升不能直接移植成某个图上的训练收益。端到端结果既受该图自身结构影响，也受聚合之外计算的限制。
+
+### 14.2 编译、预处理和复用要分别计账
+
+作者报告平均约 30 分钟、20 美元每矩阵，LLM 推理占主要时间；每任务最多几十次编译测量循环，每轮从几秒到几十秒。这是离线构造成本，不能与排序模型的 2 秒训练或亚微秒推理混为一谈。
+
+AlphaSparse 在 Gset/G31 上，9 小时内编译运行 730 个候选，最优相对 cuSPARSE 为 1.35 倍；SparseDitto 约 30 分钟达到 4.46 倍。这个案例说明两者搜索效率的差异，但仍需要长期复用来摊销生成成本。
+
+以时间为口径，若一次性构造与准备成本为 Tonce，基线单次时间为 tb，专门化后为 ts，则可推导复用次数条件：
+
+<Equation tex={String.raw`T_{\mathrm{once}}+Nt_s<Nt_b\quad\Longrightarrow\quad N>\frac{T_{\mathrm{once}}}{t_b-t_s},\qquad t_b>t_s.`} />
+
+这是本文的摊销推导，不是论文实验指标。以 LAW_in-2004 为例，仅按报告的 1.874 ms 和 1.97 倍估算，单次节省约 1.82 ms，摊销 8.9 秒预处理约需 4,900 次调用；这个示例尚未加入生成成本，也没有扣除基线可能存在的准备成本。动态变化、仅执行少量次数的任务是否值得专门化，需要另外评估。
+
+## 15. 论文贡献与结论的适用范围
+
+SparseDitto 把稀疏专门化组织成了可反复修订的编译计划：结构特征解释输入，模板模型提供可拆分的先验，合成协调表示与执行，GPU 实测决定保留哪一个实现。生成 CUDA 只是其中一个环节，性能来源还包括数据结构、工作分配和累加器方案的变化。
+
+证据较充分的部分是：统一框架覆盖三个算子和两代 GPU；在公开矩阵集上获得平均加速；消融显示结构分析与架构感知合成的增益；附录代码能具体展示混合行映射如何落地。
+
+解读时仍应保留这些边界：
+
+- **特定模式的离线专门化。** 复用建立在稀疏结构与任务键保持一致之上，未证明对不断变化的新模式可以低成本适配。
+- **性能范围有限。** 双 GPU 和 60 个矩阵支持一定覆盖度，尚不能代表所有 CUDA 版本、精度、算子或实际调用分布。
+- **构造成本没有纳入 kernel 加速。** 约 30 分钟生成、API 成本及可能很重的预处理，与计算延迟分开报告。
+- **学习模型不是所有指标最优。** GBDT 在部分关键排序指标更好，加性模型的主要额外价值是向合成暴露特征贡献。
+- **正确性来自测试契约。** 严格结构匹配和数值容差能筛掉无效候选，但不是对任意输入、运行环境和数值范围的形式化证明。
+- **论文源码不等于完整系统发布。** 本文所据材料能够核对方法、结果和一个生成示例，不能据此宣称完整搜索流程已经独立复现。
+
+对 GPU kernel 学习，最值得沿用的是这条分析路径：先确定结构导致的工作与开销，再选择匹配的表示和并行分解，最后结合资源占用与访存测量修订。格式名称、Tensor Core 使用与否，只有放回具体工作量和执行计划中才有意义。
+
+## 附录：60 个评测矩阵
+
+下表转录原论文附录，按非零数排序。Mean/Max 是每行非零数的均值/最大值，CV 是行长变异系数，density=nnz/(rows×cols)。密度保留原表舍入；是否方阵可直接由行列数判断。
+
+<details>
+<summary>展开完整矩阵清单（60 个矩阵）</summary>
+
+| Matrix | Rows × Cols | NNZ | Density | Mean | Max | CV |
+| --- | --- | --- | --- | --- | --- | --- |
+| HB_bcsstm19 | 817 × 817 | 817 | 1.2e-3 | 1.0 | 1 | 0.00 |
+| HB_str_0 | 363 × 363 | 2,454 | 1.9e-2 | 6.8 | 34 | 1.09 |
+| LPnetlib_lp_standata | 359 × 1,274 | 3,230 | 7.1e-3 | 9.0 | 745 | 4.41 |
+| HB_bp_600 | 822 × 822 | 4,172 | 6.2e-3 | 5.1 | 302 | 2.37 |
+| Bai_cdde2 | 961 × 961 | 4,681 | 5.1e-3 | 4.9 | 5 | 0.07 |
+| Sandia_fpga_dcop_04 | 1,220 × 1,220 | 5,884 | 4.0e-3 | 4.8 | 36 | 0.83 |
+| Sandia_fpga_dcop_11 | 1,220 × 1,220 | 5,892 | 4.0e-3 | 4.8 | 36 | 0.83 |
+| Sandia_fpga_dcop_47 | 1,220 × 1,220 | 5,892 | 4.0e-3 | 4.8 | 36 | 0.83 |
+| JGD_Homology_n3c6-b10 | 675 × 2,511 | 7,425 | 4.4e-3 | 11.0 | 11 | 0.00 |
+| Oberwolfach_flowmeter0 | 9,669 × 9,669 | 9,669 | 1.0e-4 | 1.0 | 1 | 0.00 |
+| HB_can_838 | 838 × 838 | 10,010 | 1.4e-2 | 11.9 | 32 | 0.52 |
+| Sandia_adder_dcop_44 | 1,813 × 1,813 | 11,245 | 3.4e-3 | 6.2 | 1,310 | 4.96 |
+| Sandia_adder_dcop_54 | 1,813 × 1,813 | 11,246 | 3.4e-3 | 6.2 | 1,310 | 4.96 |
+| PARSEC_Si2 | 769 × 769 | 17,801 | 3.0e-2 | 23.1 | 61 | 0.39 |
+| HB_bcsstk09 | 1,083 × 1,083 | 18,437 | 1.6e-2 | 17.0 | 23 | 0.24 |
+| Gset_G47 | 1,000 × 1,000 | 19,980 | 2.0e-2 | 20.0 | 34 | 0.22 |
+| JGD_G5_IG5-11 | 1,227 × 1,692 | 22,110 | 1.1e-2 | 18.0 | 111 | 0.83 |
+| Newman_hep-th | 8,361 × 8,361 | 31,502 | 4.5e-4 | 3.8 | 50 | 1.14 |
+| Gset_G31 | 2,000 × 2,000 | 39,980 | 10.0e-3 | 20.0 | 40 | 0.23 |
+| JGD_Franz_Franz5 | 7,382 × 2,882 | 44,056 | 2.1e-3 | 6.0 | 6 | 0.04 |
+| DIMACS10_fe_4elt2 | 11,143 × 11,143 | 65,636 | 5.3e-4 | 5.9 | 12 | 0.15 |
+| FIDAP_ex14 | 3,251 × 3,251 | 66,775 | 6.3e-3 | 20.5 | 37 | 0.38 |
+| Rommes_bips07_3078 | 21,128 × 21,128 | 75,729 | 1.7e-4 | 3.6 | 27 | 0.76 |
+| GHS_indef_aug2d | 29,008 × 29,008 | 76,832 | 9.1e-5 | 2.6 | 4 | 0.36 |
+| Schenk_IBMNA_c-38 | 8,127 × 8,127 | 77,689 | 1.2e-3 | 9.6 | 889 | 1.73 |
+| Boeing_msc04515 | 4,515 × 4,515 | 97,707 | 4.8e-3 | 21.6 | 27 | 0.23 |
+| FIDAP_ex15 | 6,867 × 6,867 | 98,671 | 2.1e-3 | 14.4 | 18 | 0.30 |
+| Hollinger_g7jac040 | 11,790 × 11,790 | 114,671 | 8.2e-4 | 9.7 | 120 | 1.50 |
+| Bindel_ted_B_unscaled | 10,605 × 10,605 | 144,579 | 1.3e-3 | 13.6 | 49 | 0.89 |
+| ML_Graph_kmnist_norm_10NN | 10,000 × 10,000 | 156,932 | 1.6e-3 | 15.7 | 140 | 0.47 |
+| Schenk_IBMNA_c-50 | 22,401 × 22,401 | 193,625 | 3.9e-4 | 8.6 | 1,919 | 2.65 |
+| Rajat_rajat22 | 39,899 × 39,899 | 197,264 | 1.2e-4 | 4.9 | 3,401 | 5.05 |
+| Toledo_deltaX | 68,600 × 21,961 | 247,424 | 1.6e-4 | 3.6 | 83 | 1.63 |
+| JGD_Franz_Franz11 | 47,104 × 30,144 | 329,728 | 2.3e-4 | 7.0 | 7 | 0.00 |
+| JGD_GL7d_GL7d13 | 47,271 × 8,899 | 356,232 | 8.5e-4 | 7.5 | 14 | 0.34 |
+| Quaglino_viscoplastic2 | 32,769 × 32,769 | 381,326 | 3.6e-4 | 11.6 | 73 | 1.20 |
+| Andrianov_net25 | 9,520 × 9,520 | 401,200 | 4.4e-3 | 42.1 | 139 | 0.77 |
+| GHS_indef_c-59 | 41,282 × 41,282 | 480,536 | 2.8e-4 | 11.6 | 3,090 | 2.04 |
+| Shen_e40r0100 | 17,281 × 17,281 | 553,562 | 1.9e-3 | 32.0 | 62 | 0.49 |
+| JGD_Homology_ch7-8-b4 | 141,120 × 58,800 | 705,600 | 8.5e-5 | 5.0 | 5 | 0.00 |
+| AMD_G2_circuit | 150,102 × 150,102 | 726,674 | 3.2e-5 | 4.8 | 6 | 0.13 |
+| Watson_Baumann | 112,211 × 112,211 | 760,631 | 6.0e-5 | 6.8 | 7 | 0.06 |
+| QY_case39 | 40,216 × 40,216 | 1,042,160 | 6.4e-4 | 25.9 | 20,024 | 12.20 |
+| Pereyra_landmark | 71,952 × 2,704 | 1,151,232 | 5.9e-3 | 16.0 | 16 | 0.00 |
+| Norris_heart1 | 3,557 × 3,557 | 1,387,773 | 1.1e-1 | 390.2 | 1,120 | 0.32 |
+| DIMACS10_ga2010 | 291,086 × 291,086 | 1,418,056 | 1.7e-5 | 4.9 | 85 | 0.61 |
+| CEMW_vfem | 93,476 × 93,476 | 1,434,636 | 1.6e-4 | 15.3 | 28 | 0.20 |
+| Barabasi_NotreDame_actors | 392,400 × 127,823 | 1,470,404 | 2.9e-5 | 3.7 | 646 | 2.75 |
+| Nemeth_nemeth26 | 9,506 × 9,506 | 1,511,760 | 1.7e-2 | 159.0 | 193 | 0.16 |
+| JGD_Homology_ch7-9-b5 | 423,360 × 317,520 | 2,540,160 | 1.9e-5 | 6.0 | 6 | 0.00 |
+| Andrianov_net125 | 36,720 × 36,720 | 2,577,200 | 1.9e-3 | 70.2 | 231 | 0.95 |
+| TSOPF_TSOPF_FS_b300_c2 | 56,814 × 56,814 | 8,767,466 | 2.7e-3 | 154.3 | 27,742 | 6.23 |
+| Gupta_gupta3 | 16,783 × 16,783 | 9,323,427 | 3.3e-2 | 555.5 | 14,672 | 2.22 |
+| LAW_in-2004 | 1,382,908 × 1,382,908 | 16,917,053 | 8.8e-6 | 12.2 | 7,753 | 3.04 |
+| Janna_CoupCons3D | 416,800 × 416,800 | 22,322,336 | 1.3e-4 | 53.6 | 76 | 0.16 |
+| Belcastro_human_gene1 | 22,283 × 22,283 | 24,669,643 | 5.0e-2 | 1107.1 | 7,939 | 1.27 |
+| DIMACS10_asia_osm | 11,950,757 × 11,950,757 | 25,423,206 | 1.8e-7 | 2.1 | 9 | 0.23 |
+| Belcastro_mouse_gene | 45,101 × 45,101 | 28,967,291 | 1.4e-2 | 642.3 | 8,032 | 1.33 |
+| Schenk_AFE_af_shell10 | 1,508,065 × 1,508,065 | 52,672,325 | 2.3e-5 | 34.9 | 35 | 0.03 |
+| DIMACS10_delaunay_n24 | 16,777,216 × 16,777,216 | 100,663,202 | 3.6e-7 | 6.0 | 26 | 0.22 |
+
+</details>
+
+## 参考与延伸阅读
+
+- [SparseDitto，arXiv v3](https://arxiv.org/abs/2608.05033v3)：本文方法、图表和实验的主要来源；公式中额外补充的算子定义与摊销推导已在上下文区分。
+- [SuiteSparse Matrix Collection](https://sparse.tamu.edu/)：论文使用的矩阵来源。
+- <a href={withBase('blog/sparse-matrix-formats-spmm/')}>稀疏矩阵格式与 SpMM</a>：补充 CSR、COO、ELL、BSR 等基础。
+- <a href={withBase('blog/sparsetir-paper-deep-dive/')}>SparseTIR 论文精读</a>：对照格式分解、调度表达与开发者提供重写规则的方式。
+- <a href={withBase('blog/dtc-spmm-paper-deep-dive/')}>DTC-SpMM 论文精读</a>：对照 Tensor Core 稀疏分块的数据组织与适用条件。
+- <a href={withBase('blog/cuda-nsight-compute-metrics-optimization/')}>Nsight Compute 指标与优化</a>：进一步理解请求量、带宽、occupancy 与延迟的关系。

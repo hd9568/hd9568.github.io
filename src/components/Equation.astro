@@ -1,0 +1,23 @@
+---
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
+
+interface Props {
+  tex: string;
+}
+
+const html = katex.renderToString(Astro.props.tex, {
+  displayMode: true,
+  output: 'htmlAndMathml',
+  throwOnError: true,
+  strict: 'error',
+  trust: false,
+});
+---
+<div class="equation" tabindex="0" role="region" aria-label="数学公式，可横向滚动" set:html={html} />
+<style>
+  .equation { max-width: 100%; overflow-x: auto; margin: 22px 0; padding: 4px 2px; font-size: .96em; }
+  .equation :global(.katex-display) { margin: 0; padding: 8px 0; text-align: left; }
+  .equation :global(.katex-display > .katex) { text-align: left; }
+  .equation:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+</style>

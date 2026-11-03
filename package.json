@@ -17,10 +17,12 @@
     "@astrojs/rss": "^4.0.18",
     "@astrojs/sitemap": "^3.7.3",
     "astro": "^6.3.8",
+    "katex": "^0.19.1",
     "sharp": "^0.34.3"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.12",
+    "@types/katex": "^0.16.8",
     "typescript": "^6.0.3"
   }
 }
