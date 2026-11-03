@@ -1,271 +1,166 @@
 ---
 import { Image } from 'astro:assets';
+import type { MarkdownHeading } from 'astro';
 import type { CollectionEntry } from 'astro:content';
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import FormattedDate from '../components/FormattedDate.astro';
 import Header from '../components/Header.astro';
-
+import { postUrl, categoryUrl, topicFor, withBase } from '../lib/blog';
+import { SITE_TITLE } from '../consts';
 type AdjacentPost = Pick<CollectionEntry<'blog'>, 'id' | 'data'>;
 type Props = CollectionEntry<'blog'>['data'] & {
-  previousPost?: AdjacentPost;
-  nextPost?: AdjacentPost;
+  previousPost?: AdjacentPost; nextPost?: AdjacentPost; headings: MarkdownHeading[]; minutes: number;
 };
-
-const { title, description, pubDate, updatedDate, heroImage, category = '未分类', previousPost, nextPost } = Astro.props;
+const { title, description, pubDate, updatedDate, heroImage, category = '未分类', previousPost, nextPost, headings, minutes } = Astro.props;
+const toc = headings.filter((heading) => (heading.depth === 2 || heading.depth === 3) && heading.text !== '目录');
+const cover = heroImage && !heroImage.src.includes('blog-placeholder') ? heroImage : undefined;
 const showUpdatedDate = updatedDate && updatedDate.valueOf() !== pubDate.valueOf();
+const topic = topicFor(category);
 ---
-
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <BaseHead title={title} description={description} />
-  </head>
+  <head><BaseHead title={`${title} | ${SITE_TITLE}`} description={description} image={cover} /></head>
   <body>
     <Header />
-    <main class="post-layout container">
-      <article class="post-shell light-card">
-        <div class="post-header">
-          <div class="meta-row">
-            <span class="post-chip">创建于 <FormattedDate date={pubDate} format="datetime" /></span>
-            <span class="post-chip">{category}</span>
-            {showUpdatedDate && <span class="post-chip">更新于 <FormattedDate date={updatedDate!} format="datetime" /></span>}
+    <main id="main" class="container post-layout">
+      <nav class="breadcrumbs" aria-label="面包屑导航"><a href={withBase('blog/')}>文章索引</a><span aria-hidden="true">/</span><a href={categoryUrl(topic.slug)}>{category}</a></nav>
+      <div class="reading-layout">
+        <article class="post-shell">
+          <header class="post-header">
+            <a class="eyebrow accent" href={categoryUrl(topic.slug)}>{topic.label} / {category}</a>
+            <h1>{title}</h1>
+            <p class="post-description">{description}</p>
+            <div class="meta-row"><span>发布于 <FormattedDate date={pubDate} /></span><span>约 {minutes} 分钟阅读</span>{showUpdatedDate && <span>更新于 <FormattedDate date={updatedDate!} /></span>}</div>
+          </header>
+          {toc.length > 0 && <details class="mobile-toc"><summary>本文目录 <span>{toc.length} 个章节</span></summary><nav aria-label="移动端文章目录">{toc.map((heading) => <a class:list={{ nested: heading.depth === 3 }} href={`#${heading.slug}`}>{heading.text}</a>)}</nav></details>}
+          {cover && <div class="hero-image"><Image width={1200} height={630} src={cover} alt="" /></div>}
+          <div class="prose"><slot /></div>
+          {(previousPost || nextPost) && <nav class="post-nav" aria-label="同分类文章导航">
+            {previousPost ? <a href={postUrl(previousPost.id)}><span>← 上一篇</span><strong>{previousPost.data.title}</strong></a> : <div />}
+            {nextPost ? <a href={postUrl(nextPost.id)}><span>下一篇 →</span><strong>{nextPost.data.title}</strong></a> : <div />}
+          </nav>}
+          <a class="text-link back-category" href={categoryUrl(topic.slug)}>← 返回{category}分类</a>
+        </article>
+        <aside class="toc-sidebar">
+          <div class="toc-sticky">
+            <p class="eyebrow">ON THIS PAGE / 本文目录</p>
+            {toc.length > 0 ? <nav aria-label="文章目录">{toc.map((heading) => <a class:list={{ nested: heading.depth === 3 }} href={`#${heading.slug}`}>{heading.text}</a>)}</nav> : <p class="no-headings">从正文开始阅读</p>}
+            <div class="toc-footer"><a href={categoryUrl(topic.slug)}>浏览同类笔记 ↗</a><a href="#main">回到顶部 ↑</a></div>
           </div>
-          <h1>{title}</h1>
-          <p class="post-description">{description}</p>
-        </div>
-
-        {heroImage && (
-          <div class="hero-image">
-            <Image width={1200} height={630} src={heroImage} alt="" />
-          </div>
-        )}
-
-        <div class="prose">
-          <slot />
-        </div>
-
-        {(previousPost || nextPost) && (
-          <nav class="post-nav" aria-label="文章导航">
-            {previousPost ? (
-              <a class="post-nav-card previous" href={`/blog/${previousPost.id}/`}>
-                <span>上一篇</span>
-                <strong>{previousPost.data.title}</strong>
-              </a>
-            ) : (
-              <div class="post-nav-spacer" />
-            )}
-
-            {nextPost ? (
-              <a class="post-nav-card next" href={`/blog/${nextPost.id}/`}>
-                <span>下一篇</span>
-                <strong>{nextPost.data.title}</strong>
-              </a>
-            ) : (
-              <div class="post-nav-spacer" />
-            )}
-          </nav>
-        )}
-      </article>
+        </aside>
+      </div>
     </main>
     <Footer />
   </body>
 </html>
-
+<script>
+  const links = [...document.querySelectorAll<HTMLAnchorElement>('.toc-sidebar nav a')];
+  const targets = links.map((link) => document.getElementById(decodeURIComponent(link.hash.slice(1)))).filter((node): node is HTMLElement => Boolean(node));
+  if (targets.length) {
+    let ticking = false;
+    const update = () => {
+      let active = targets[0];
+      for (const target of targets) {
+        if (target.getBoundingClientRect().top <= 140) active = target;
+        else break;
+      }
+      for (const link of links) {
+        const current = decodeURIComponent(link.hash.slice(1)) === active.id;
+        if (current) link.setAttribute('aria-current', 'location');
+        else link.removeAttribute('aria-current');
+      }
+      ticking = false;
+    };
+    window.addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+    update();
+  }
+  document.querySelectorAll<HTMLPreElement>('.prose pre').forEach((pre) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block';
+    pre.before(wrapper);
+    wrapper.append(pre);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'copy-code';
+    button.textContent = '复制代码';
+    button.setAttribute('aria-label', '复制代码');
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(pre.querySelector('code')?.textContent ?? pre.textContent ?? '');
+        button.textContent = '已复制';
+      } catch { button.textContent = '请手动复制'; }
+      setTimeout(() => { button.textContent = '复制代码'; }, 2000);
+    });
+    wrapper.append(button);
+  });
+</script>
 <style>
-  .post-layout {
-    padding: 2rem 0 3rem;
+  .post-layout { padding-top: 32px; padding-bottom: 65px; }
+  .breadcrumbs { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--muted); margin-bottom: 34px; }
+  .reading-layout { display: grid; grid-template-columns: minmax(0, 820px) 230px; gap: 65px; }
+  .post-shell { min-width: 0; }
+  .post-header { border-bottom: 1px solid var(--line); padding-bottom: 26px; margin-bottom: 30px; }
+  .post-header .eyebrow { font-size: 10px; }
+  h1 { font-size: clamp(26px, 3.2vw, 37px); line-height: 1.55; letter-spacing: -.035em; margin: 18px 0; }
+  .post-description { font-size: 14px; color: var(--muted); line-height: 1.9; margin-bottom: 22px; }
+  .meta-row { display: flex; flex-wrap: wrap; column-gap: 23px; row-gap: 7px; color: var(--muted); font-size: 10px; }
+  .hero-image { margin-bottom: 25px; }
+  .hero-image img { width: 100%; border-radius: 5px; }
+  .toc-sticky { position: sticky; top: 112px; }
+  .toc-sticky > .eyebrow { font-size: 9px; margin-bottom: 18px; }
+  .toc-sticky nav { max-height: calc(100vh - 260px); overflow-y: auto; overscroll-behavior: contain; border-left: 1px solid var(--line); scrollbar-width: thin; }
+  .toc-sticky nav a { display: block; padding: 6px 0 6px 17px; font-size: 11px; color: var(--muted); border-left: 2px solid transparent; margin-left: -1px; line-height: 1.75; overflow-wrap: anywhere; }
+  .toc-sticky nav a.nested { padding-left: 28px; font-size: 10px; }
+  .toc-sticky nav a:hover, .toc-sticky nav a[aria-current] { color: var(--accent); border-left-color: var(--accent); }
+  .toc-footer { border-top: 1px solid var(--line); margin-top: 23px; padding-top: 16px; display: grid; gap: 10px; font-size: 11px; color: var(--muted); }
+  .no-headings { font-size: 12px; color: var(--muted); }
+  .mobile-toc { display: none; }
+  .prose { font-size: 15px; line-height: 1.95; overflow-wrap: anywhere; }
+  .prose :global(h1) { font-size: 28px; margin: 32px 0 18px; }
+  .prose :global(h2) { font-size: 24px; border-bottom: 1px solid var(--line); padding-bottom: 12px; margin: 46px 0 20px; line-height: 1.5; }
+  /* Existing Markdown keeps its source TOC; the responsive navigation replaces its display. */
+  .prose :global(h2#目录:first-child),
+  .prose :global(h2#目录:first-child + ol),
+  .prose :global(h2#目录:first-child + ul) { display: none; }
+  .prose :global(> h2:first-child),
+  .prose :global(h2#目录:first-child + ol + h2),
+  .prose :global(h2#目录:first-child + ul + h2) { margin-top: 0; }
+  .prose :global(h3) { font-size: 19px; margin: 30px 0 14px; line-height: 1.6; }
+  .prose :global(h4) { font-size: 16px; margin: 24px 0 12px; }
+  .prose :global(p) { margin: 0 0 16px; }
+  .prose :global(ul), .prose :global(ol) { padding-left: 23px; margin: 12px 0 20px; }
+  .prose :global(li + li) { margin-top: 7px; }
+  .prose :global(li > p) { margin-bottom: 8px; }
+  .prose :global(a) { color: var(--accent); text-decoration: underline; text-decoration-color: #d5b5a6; text-underline-offset: 4px; }
+  .prose :global(code) { font: .87em/1.7 var(--font-mono); background: #efeee8; padding: 2px 5px; border-radius: 3px; }
+  .prose :global(pre) { margin: 20px 0; padding: 40px 20px 20px; overflow-x: auto; border-radius: 5px; font-size: 12px; line-height: 1.85; max-width: 100%; }
+  .prose :global(pre code) { font: inherit; background: none; padding: 0; border: 0; }
+  .prose :global(.code-block) { position: relative; min-width: 0; }
+  .prose :global(.copy-code) { position: absolute; top: 7px; right: 8px; font-size: 10px; border: 1px solid #ffffff40; border-radius: 3px; background: #252830; color: #ecece6; padding: 3px 8px; }
+  .prose :global(blockquote) { margin: 22px 0; border-left: 3px solid #9aa58b; background: var(--soft); padding: 16px 20px; color: #626b57; }
+  .prose :global(blockquote p:last-child) { margin-bottom: 0; }
+  .prose :global(table) { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 24px 0; font-size: 12px; }
+  .prose :global(th), .prose :global(td) { border: 1px solid var(--line); padding: 10px 14px; text-align: left; min-width: 85px; }
+  .prose :global(th) { background: var(--soft); font-weight: 600; }
+  .prose :global(img) { display: block; max-width: 100%; margin: 20px auto; border-radius: 4px; }
+  .prose :global(hr) { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+  .prose :global(.katex-display) { overflow-x: auto; overflow-y: hidden; }
+  .post-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; padding-top: 30px; margin-top: 45px; border-top: 1px solid var(--line); }
+  .post-nav a { border: 1px solid var(--line); border-radius: 5px; padding: 18px; display: grid; gap: 10px; }
+  .post-nav a:hover { border-color: #b4baa9; }
+  .post-nav span { font-size: 11px; color: var(--muted); }
+  .post-nav strong { font-size: 13px; font-weight: 500; line-height: 1.8; }
+  .back-category { margin-top: 24px; font-size: 12px; }
+  @media (max-width: 1000px) { .reading-layout { grid-template-columns: minmax(0, 1fr) 200px; gap: 35px; } }
+  @media (max-width: 850px) {
+    .reading-layout { grid-template-columns: 1fr; }
+    .toc-sidebar { display: none; }
+    .mobile-toc { display: block; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; margin-bottom: 28px; padding: 13px 16px; font-size: 13px; }
+    .mobile-toc summary span { font-size: 11px; margin-left: 15px; color: var(--muted); }
+    .mobile-toc nav { display: grid; max-height: 320px; overflow-y: auto; padding-top: 12px; }
+    .mobile-toc nav a { font-size: 12px; padding: 7px 0; color: var(--muted); }
+    .mobile-toc nav a.nested { padding-left: 14px; }
   }
-
-  .post-shell {
-    padding: 1.8rem;
-  }
-
-  .post-header {
-    max-width: 48rem;
-    margin-bottom: 1.4rem;
-  }
-
-  .meta-row {
-    display: flex;
-    gap: 0.55rem;
-    flex-wrap: wrap;
-    margin-bottom: 1rem;
-  }
-
-  .post-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 2rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 999px;
-    background: rgba(99, 102, 241, 0.1);
-    color: rgb(var(--accent));
-    font-size: 0.9rem;
-    font-weight: 700;
-  }
-
-  .post-shell h1 {
-    color: rgb(var(--text-dark));
-    font-size: clamp(2.4rem, 5vw, 4rem);
-  }
-
-  .post-description {
-    color: rgb(var(--text-dark-muted));
-    font-size: 1.08rem;
-  }
-
-  .hero-image {
-    margin-bottom: 1.8rem;
-    overflow: hidden;
-    border-radius: 1.35rem;
-  }
-
-  .hero-image img {
-    width: 100%;
-  }
-
-  .prose {
-    max-width: 48rem;
-    color: rgb(var(--text-dark));
-  }
-
-  .prose :global(h2),
-  .prose :global(h3),
-  .prose :global(h4) {
-    color: rgb(var(--text-dark));
-  }
-
-  .prose :global(h2) {
-    margin: 1.65rem 0 0.6rem;
-  }
-
-  .prose :global(h3) {
-    margin: 1.25rem 0 0.5rem;
-  }
-
-  .prose :global(h4) {
-    margin: 1rem 0 0.45rem;
-  }
-
-  .prose :global(p),
-  .prose :global(li),
-  .prose :global(blockquote) {
-    color: rgb(var(--text-dark-muted));
-  }
-
-  .prose :global(blockquote) p {
-    color: rgb(var(--text-dark));
-  }
-
-  .prose :global(p) {
-    margin-bottom: 0.72rem;
-  }
-
-  .prose :global(ul),
-  .prose :global(ol) {
-    margin: 0.5rem 0 0.8rem;
-    padding-left: 1.35rem;
-  }
-
-  .prose :global(li + li) {
-    margin-top: 0.3rem;
-  }
-
-  .prose :global(a) {
-    color: rgb(var(--accent));
-  }
-
-  .prose :global(pre) {
-    margin: 1rem 0;
-    padding: 1rem 1.1rem;
-  }
-
-  .prose :global(blockquote) {
-    margin: 1rem 0;
-    padding: 0.8rem 1rem;
-  }
-
-  .prose :global(table) {
-    display: block;
-    max-width: 100%;
-    margin: 1rem 0;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .prose :global(th),
-  .prose :global(td) {
-    padding: 0.65rem 0.8rem;
-  }
-
-  .prose :global(hr) {
-    margin: 1.4rem 0;
-  }
-
-  .post-nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-    margin-top: 2.2rem;
-    padding-top: 1.4rem;
-    border-top: 1px solid rgba(15, 23, 42, 0.08);
-  }
-
-  .post-nav-card {
-    min-width: 0;
-    display: grid;
-    gap: 0.35rem;
-    padding: 1rem;
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    border-radius: 1.2rem;
-    background: rgb(var(--surface-muted));
-    color: rgb(var(--text-dark));
-    text-decoration: none;
-    transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-  }
-
-  .post-nav-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(var(--accent-soft), 0.24);
-    background: rgba(var(--accent-soft), 0.08);
-  }
-
-  .post-nav-card span {
-    color: rgb(var(--accent));
-    font-size: 0.82rem;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-  }
-
-  .post-nav-card strong {
-    overflow-wrap: anywhere;
-    line-height: 1.45;
-  }
-
-  .post-nav-card.next {
-    text-align: right;
-  }
-
-  @media (max-width: 720px) {
-    .post-layout {
-      padding-top: 1rem;
-    }
-
-    .post-shell {
-      padding: 1.2rem;
-    }
-
-    .post-nav {
-      grid-template-columns: 1fr;
-    }
-
-    .post-nav-spacer {
-      display: none;
-    }
-
-    .post-nav-card.next {
-      text-align: left;
-    }
-  }
+  @media (max-width: 480px) { .post-nav { grid-template-columns: 1fr; } .post-nav > div { display: none; } .prose { font-size: 14px; } .prose :global(h2) { font-size: 21px; } .meta-row { column-gap: 15px; } }
 </style>

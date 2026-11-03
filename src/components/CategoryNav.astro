@@ -1,0 +1,25 @@
+---
+import { categoryUrl, withBase } from '../lib/blog';
+interface Props { groups: { name: string; slug: string; posts: unknown[] }[]; active?: string; }
+const { groups, active } = Astro.props;
+---
+<aside class="category-sidebar">
+  <nav aria-label="文章分类">
+    <p class="eyebrow">EXPLORE / 知识分类</p>
+    <a class:list={['category-link', { selected: !active }]} href={withBase('blog/')} aria-current={!active ? 'page' : undefined}><span>全部分类</span><small>{groups.reduce((n, group) => n + group.posts.length, 0)}</small></a>
+    {groups.map((group) => <a class:list={['category-link', { selected: active === group.slug }]} href={categoryUrl(group.slug)} aria-current={active === group.slug ? 'page' : undefined}><span>{group.name}</span><small>{group.posts.length}</small></a>)}
+    <div class="sidebar-note"><span class="note-dot"></span>持续学习，持续更新<p>从基础知识到系统实践，<br />一步一步建立知识体系。</p></div>
+  </nav>
+</aside>
+<style>
+  nav { position: sticky; top: 112px; }
+  .eyebrow { margin-bottom: 20px; font-size: 10px; }
+  .category-link { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 43px; padding: 8px 12px; margin: 3px -12px; border-radius: 4px; color: var(--muted); font-size: 12px; }
+  .category-link small { font: 10px var(--font-mono); }
+  .category-link:hover { background: var(--soft); color: var(--ink); }
+  .category-link.selected { color: var(--accent); background: var(--accent-wash); }
+  .sidebar-note { border-top: 1px solid var(--line); margin-top: 30px; padding-top: 24px; font-size: 11px; color: var(--ink); }
+  .note-dot { display: inline-block; width: 5px; height: 5px; background: #6a7e60; border-radius: 50%; margin-right: 8px; }
+  .sidebar-note p { color: var(--muted); font-size: 11px; margin: 10px 0 0; line-height: 1.9; }
+  @media (max-width: 850px) { nav { position: static; display: flex; flex-wrap: wrap; gap: 8px; } .eyebrow, .sidebar-note { display: none; } .category-link { margin: 0; border: 1px solid var(--line); padding: 7px 12px; min-height: 36px; gap: 10px; } }
+</style>

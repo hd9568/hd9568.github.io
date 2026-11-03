@@ -1,0 +1,133 @@
+---
+import type { CollectionEntry } from 'astro:content';
+import { postUrl, PAGE_SIZE } from '../lib/blog';
+interface Props { posts: CollectionEntry<'blog'>[]; groups: { name: string }[]; }
+const { posts, groups } = Astro.props;
+const index = posts.map((post) => ({
+  title: post.data.title, description: post.data.description, category: post.data.category ?? '未分类',
+  url: postUrl(post.id), date: post.data.pubDate.toISOString(),
+}));
+---
+<section class="search-area" aria-label="搜索文章" data-page-size={PAGE_SIZE}>
+  <form role="search" class="search-form">
+    <div class="search-input-wrap"><span aria-hidden="true" class="search-icon">⌕</span><label class="sr-only" for="article-search">搜索标题、摘要或分类</label><input id="article-search" type="search" name="q" placeholder="搜索笔记，例如 CUDA、KV Cache…" autocomplete="off" /><kbd aria-hidden="true">/</kbd></div>
+    <label class="sr-only" for="search-category">筛选分类</label><select id="search-category" name="category"><option value="">全部分类</option>{groups.map((group) => <option value={group.name}>{group.name}</option>)}</select>
+    <button class="button primary search-submit" type="submit">搜索</button>
+  </form>
+  <noscript><p class="noscript-note">搜索需要启用 JavaScript，也可以通过下方分类与分页浏览全部文章。</p></noscript>
+  <div id="search-results" hidden>
+    <div class="search-summary"><p role="status" aria-live="polite" id="search-status"></p><button id="clear-search" type="button">清除筛选 ×</button></div>
+    <div id="search-items"></div>
+    <div class="search-empty" hidden><span aria-hidden="true">⌕</span><h2>暂时没有找到相关笔记</h2><p>试试更短的关键词，或切换到全部分类。</p></div>
+    <nav class="pagination" id="search-pagination" aria-label="搜索结果分页"><button id="search-prev" type="button">← 上一页</button><span class="page-status" id="search-page"></span><button id="search-next" type="button">下一页 →</button></nav>
+  </div>
+  <script type="application/json" id="search-index" set:html={JSON.stringify(index).replace(/</g, '\\u003c')} />
+</section>
+<script>
+  type SearchPost = { title: string; description: string; category: string; url: string; date: string };
+  const root = document.querySelector<HTMLElement>('.search-area')!;
+  const posts: SearchPost[] = JSON.parse(document.querySelector('#search-index')!.textContent!);
+  const input = document.querySelector<HTMLInputElement>('#article-search')!;
+  const select = document.querySelector<HTMLSelectElement>('#search-category')!;
+  const results = document.querySelector<HTMLElement>('#search-results')!;
+  const overview = document.querySelector<HTMLElement>('#category-overview')!;
+  const items = document.querySelector('#search-items')!;
+  const status = document.querySelector('#search-status')!;
+  const pager = document.querySelector<HTMLElement>('#search-pagination')!;
+  const previous = document.querySelector<HTMLButtonElement>('#search-prev')!;
+  const next = document.querySelector<HTMLButtonElement>('#search-next')!;
+  const pageSize = Number(root.dataset.pageSize);
+  let page = 1;
+  const normalize = (text: string) => text.normalize('NFKC').toLocaleLowerCase().trim();
+
+  function render(updateUrl = true) {
+    const query = normalize(input.value);
+    const terms = query.split(/\s+/).filter(Boolean);
+    const active = Boolean(query || select.value);
+    results.hidden = !active;
+    overview.hidden = active;
+    const filtered = posts.filter((post) => (!select.value || post.category === select.value) && terms.every((term) => normalize(`${post.title} ${post.description} ${post.category}`).includes(term)));
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    page = Math.max(1, Math.min(page, totalPages));
+    if (updateUrl) {
+      const url = new URL(location.href);
+      for (const key of ['q', 'category', 'page']) url.searchParams.delete(key);
+      if (query) url.searchParams.set('q', input.value.trim());
+      if (select.value) url.searchParams.set('category', select.value);
+      if (active && page > 1) url.searchParams.set('page', String(page));
+      history.replaceState(null, '', url);
+    }
+    items.replaceChildren();
+    if (!active) return;
+    status.textContent = `找到 ${filtered.length} 篇笔记${filtered.length ? ` · 第 ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filtered.length)} 篇` : ''}`;
+    for (const post of filtered.slice((page - 1) * pageSize, page * pageSize)) {
+      const article = document.createElement('article');
+      article.className = 'search-result';
+      const link = document.createElement('a');
+      link.href = post.url;
+      const category = document.createElement('span');
+      category.className = 'search-result-category';
+      category.textContent = post.category;
+      const title = document.createElement('h3');
+      title.textContent = post.title;
+      const description = document.createElement('p');
+      description.textContent = post.description;
+      const date = document.createElement('time');
+      date.dateTime = post.date;
+      date.textContent = new Date(post.date).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
+      link.append(category, title, description, date);
+      article.append(link);
+      items.append(article);
+    }
+    document.querySelector<HTMLElement>('.search-empty')!.hidden = filtered.length > 0;
+    pager.hidden = totalPages <= 1;
+    previous.disabled = page === 1;
+    next.disabled = page === totalPages;
+    document.querySelector('#search-page')!.textContent = `${page} / ${totalPages}`;
+  }
+  function restore() {
+    const params = new URLSearchParams(location.search);
+    input.value = params.get('q') ?? '';
+    select.value = params.get('category') ?? '';
+    const requestedPage = Number(params.get('page'));
+    page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    render(false);
+  }
+  document.querySelector('.search-form')!.addEventListener('submit', (event) => { event.preventDefault(); page = 1; render(); });
+  input.addEventListener('input', () => { page = 1; render(); });
+  select.addEventListener('change', () => { page = 1; render(); });
+  document.querySelector('#clear-search')!.addEventListener('click', () => { input.value = ''; select.value = ''; page = 1; render(); input.focus(); });
+  for (const [button, direction] of [[previous, -1], [next, 1]] as const) button.addEventListener('click', () => { page += direction; render(); root.scrollIntoView({ block: 'start' }); });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !(event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]'))) { event.preventDefault(); input.focus(); }
+  });
+  window.addEventListener('popstate', restore);
+  restore();
+</script>
+<style>
+  .search-area { scroll-margin-top: 100px; }
+  .search-form { display: flex; gap: 9px; }
+  .search-input-wrap { display: flex; align-items: center; flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--white); border-radius: 5px; padding-inline: 13px; gap: 10px; }
+  .search-icon { color: var(--muted); font-size: 24px; line-height: 1; }
+  input { width: 100%; min-width: 0; background: transparent; border: 0; outline: 0; height: 45px; font-size: 12px; color: var(--ink); }
+  .search-input-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash); }
+  input::placeholder { color: #85887f; }
+  kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 6px; color: var(--muted); font: 11px/20px var(--font-mono); }
+  select { border: 1px solid var(--line); color: var(--muted); border-radius: 5px; background: var(--white); max-width: 145px; padding: 9px; font-size: 12px; }
+  .search-submit { font-size: 12px; padding: 8px 15px; }
+  .search-summary { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin: 28px 0 4px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+  .search-summary p { margin: 0; }
+  #clear-search { border: 0; background: transparent; color: var(--accent); font-size: 11px; padding: 5px; }
+  .search-empty { text-align: center; padding: 70px 20px; color: var(--muted); }
+  .search-empty > span { font-size: 42px; }
+  .search-empty h2 { font-size: 19px; margin: 12px 0; }
+  .search-empty p, .noscript-note { font-size: 12px; }
+  :global(.search-result) { border-bottom: 1px solid var(--line); }
+  :global(.search-result > a) { display: block; padding: 22px 0; }
+  :global(.search-result h3) { font-size: 15px; margin: 6px 0 8px; line-height: 1.65; }
+  :global(.search-result a:hover h3) { color: var(--accent); }
+  :global(.search-result p) { color: var(--muted); font-size: 12px; margin: 0 0 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  :global(.search-result time) { font: 10px var(--font-mono); color: var(--muted); }
+  :global(.search-result-category) { color: var(--accent); font-size: 10px; }
+  @media (max-width: 600px) { .search-form { flex-wrap: wrap; } .search-input-wrap { flex-basis: 100%; } select { max-width: none; flex: 1; } .search-submit { padding-inline: 24px; } }
+</style>

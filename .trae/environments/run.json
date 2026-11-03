@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "defaultActionId": "blog",
+  "actions": [
+    {
+      "id": "blog",
+      "name": "博客预览",
+      "command": "PATH=\"$HOME/bin:$PATH\" npm run dev -- --host 127.0.0.1",
+      "cwd": ".",
+      "background": true,
+      "source": "agent",
+      "readiness": {
+        "outputPatterns": ["Local", "localhost", "127.0.0.1"],
+        "timeoutMs": 60000
+      },
+      "open": {
+        "type": "preview",
+        "url": "http://127.0.0.1:4321/",
+        "urlFromOutput": true
+      }
+    }
+  ]
+}

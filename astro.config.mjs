@@ -10,6 +10,7 @@ const base = repository && repository !== 'hd9568.github.io' ? `/${repository}` 
 export default defineConfig({
   site: 'https://hd9568.github.io',
   base,
+  devToolbar: { enabled: false },
   integrations: [mdx(), sitemap()],
   fonts: [
     {

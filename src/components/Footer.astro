@@ -1,73 +1,18 @@
 ---
-const year = new Date().getFullYear();
-import { SITE_EMAIL, SITE_GITHUB, SITE_NAME } from '../consts';
+import { SITE_GITHUB, SITE_NAME } from '../consts';
+import { withBase } from '../lib/blog';
 ---
-
-<footer class="site-footer">
-  <div class="container footer-shell">
-    <div class="footer-main">
-      <div class="footer-row">
-        <span>{SITE_NAME} © {year}</span>
-        <div class="footer-links">
-          <a href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub</a>
-          <a href={`mailto:${SITE_EMAIL}`}>{SITE_EMAIL}</a>
-        </div>
-      </div>
-      <p class="ai-disclaimer">
-        本网站由 Trae 与 GPT 系列模型辅助自动搭建；文章内容包含 AI 生成、人工整理与持续校订，仅作为个人学习笔记。
-      </p>
-    </div>
+<footer class="container site-footer">
+  <div class="footer-top">
+    <span>© {new Date().getFullYear()} {SITE_NAME}<span class="footer-separator">·</span>理解原理，记录实践。</span>
+    <div><a href={withBase('rss.xml')}>RSS ↗</a><a href={SITE_GITHUB} target="_blank" rel="noreferrer">GitHub ↗</a><a href="#main">回到顶部 ↑</a></div>
   </div>
+  <p>个人学习笔记 · 内容包含 AI 辅助生成、人工整理与持续校订。</p>
 </footer>
-
 <style>
-  .site-footer {
-    padding: 0 0 2.4rem;
-  }
-
-  .footer-shell {
-    padding-top: 1.25rem;
-    border-top: 1px solid rgba(15, 23, 42, 0.08);
-  }
-
-  .footer-main {
-    width: 100%;
-    display: grid;
-    gap: 0.65rem;
-  }
-
-  .footer-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  .footer-row,
-  .footer-links a {
-    color: rgb(var(--text-dark-muted));
-    font-size: 0.94rem;
-    text-decoration: none;
-  }
-
-  .ai-disclaimer {
-    max-width: 880px;
-    margin: 0;
-    color: rgb(var(--text-dark-muted));
-    font-size: 0.82rem;
-    line-height: 1.7;
-  }
-
-  .footer-links {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  @media (max-width: 720px) {
-    .footer-row {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-  }
+  .site-footer { border-top: 1px solid var(--line); padding-block: 26px 28px; color: var(--muted); font-size: 11px; }
+  .footer-top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 15px; }
+  .footer-top > div { display: flex; gap: 24px; }
+  .footer-separator { margin: 0 12px; }
+  p { font-size: 10px; margin: 8px 0 0; }
 </style>

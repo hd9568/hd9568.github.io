@@ -1,14 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <clipPath id="clip">
-      <rect x="4" y="4" width="56" height="56" rx="18" ry="18" />
-    </clipPath>
-    <linearGradient id="frame" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#d1fae5" />
-      <stop offset="100%" stop-color="#10b981" />
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="20" fill="#0b1018" />
-  <rect x="2" y="2" width="60" height="60" rx="19" fill="none" stroke="url(#frame)" stroke-width="2" />
-  <image href="/favicon-avatar.png" x="4" y="4" width="56" height="56" preserveAspectRatio="xMidYMid slice" clip-path="url(#clip)" />
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="7" fill="#262923"/><text x="10" y="30" font-family="Georgia,serif" font-weight="bold" font-size="33" fill="#faf9f6">h</text><circle cx="31" cy="29" r="3" fill="#dc916a"/></svg>

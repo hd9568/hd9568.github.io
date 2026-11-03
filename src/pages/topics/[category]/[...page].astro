@@ -1,0 +1,48 @@
+---
+import type { GetStaticPaths, Page } from 'astro';
+import type { CollectionEntry } from 'astro:content';
+import BaseHead from '../../../components/BaseHead.astro';
+import Header from '../../../components/Header.astro';
+import Footer from '../../../components/Footer.astro';
+import PostRow from '../../../components/PostRow.astro';
+import CategoryNav from '../../../components/CategoryNav.astro';
+import { getBlog, PAGE_SIZE, categoryUrl, withBase } from '../../../lib/blog';
+import { SITE_TITLE } from '../../../consts';
+export const getStaticPaths = (async ({ paginate }) => {
+  const { groups } = await getBlog();
+  return groups.flatMap((group) => paginate(group.posts, { params: { category: group.slug }, props: { group, groups }, pageSize: PAGE_SIZE }));
+}) satisfies GetStaticPaths;
+interface Props {
+  page: Page<CollectionEntry<'blog'>>;
+  group: Awaited<ReturnType<typeof getBlog>>['groups'][number];
+  groups: Awaited<ReturnType<typeof getBlog>>['groups'];
+}
+const { page, group, groups } = Astro.props;
+---
+<!doctype html>
+<html lang="zh-CN">
+  <head><BaseHead title={`${group.name}${page.currentPage > 1 ? ` · 第 ${page.currentPage} 页` : ''} | ${SITE_TITLE}`} description={group.description} /></head>
+  <body>
+    <Header />
+    <main id="main" class="container">
+      <header class="page-heading"><a class="text-link breadcrumb" href={withBase('blog/')}>← 返回文章索引</a><p class="eyebrow accent">{group.label}</p><h1>{group.name}</h1><p>{group.description}</p></header>
+      <div class="archive-layout">
+        <CategoryNav groups={groups} active={group.slug} />
+        <div class="archive-content">
+          <div class="category-list-head"><span>共 {page.total} 篇笔记 · 第 {page.start + 1}–{page.end + 1} 篇</span><span>最新发布优先 ↓</span></div>
+          <section aria-label={`${group.name}文章列表`} class="category-posts">{page.data.map((post) => <PostRow post={post} />)}</section>
+          {page.lastPage > 1 && <nav class="pagination" aria-label="文章分页">
+            {page.currentPage > 1 && <a rel="prev" href={categoryUrl(group.slug, page.currentPage - 1)}>← 上一页</a>}
+            {Array.from({ length: page.lastPage }, (_, i) => i + 1).map((number) => <a href={categoryUrl(group.slug, number)} aria-label={`第 ${number} 页`} aria-current={number === page.currentPage ? 'page' : undefined}>{number}</a>)}
+            {page.currentPage < page.lastPage && <a rel="next" href={categoryUrl(group.slug, page.currentPage + 1)}>下一页 →</a>}
+          </nav>}
+        </div>
+      </div>
+    </main>
+    <Footer />
+  </body>
+</html>
+<style>
+  .breadcrumb { font-size: 11px; margin-bottom: 25px; }
+  .category-list-head { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+</style>
