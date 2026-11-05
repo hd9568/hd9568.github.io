@@ -5,3 +5,8 @@ export const SITE_ROLE = '研究生 | AI Infra / 训推优化求职准备中';
 export const SITE_EMAIL = '2358440725@qq.com';
 export const SITE_GITHUB = 'https://github.com/hd9568';
 export const SITE_REPO_HINT = '推荐部署仓库名：hd9568.github.io';
+
+export const GISCUS_REPO = 'hd9568/hd9568.github.io';
+export const GISCUS_REPO_ID = 'R_kgDOSqA6hA';
+export const GISCUS_CATEGORY = 'Announcements';
+export const GISCUS_CATEGORY_ID = 'DIC_kwDOSqA6hM4DKarJ';

@@ -3,6 +3,7 @@ import { Image } from 'astro:assets';
 import type { MarkdownHeading } from 'astro';
 import type { CollectionEntry } from 'astro:content';
 import BaseHead from '../components/BaseHead.astro';
+import ArticleReactions from '../components/ArticleReactions.astro';
 import Footer from '../components/Footer.astro';
 import FormattedDate from '../components/FormattedDate.astro';
 import Header from '../components/Header.astro';
@@ -36,6 +37,7 @@ const topic = topicFor(category);
           {toc.length > 0 && <details class="mobile-toc"><summary>本文目录 <span>{toc.length} 个章节</span></summary><nav aria-label="移动端文章目录">{toc.map((heading) => <a class:list={{ nested: heading.depth === 3 }} href={`#${heading.slug}`}>{heading.text}</a>)}</nav></details>}
           {cover && <div class="hero-image"><Image width={1200} height={630} src={cover} alt="" /></div>}
           <div class="prose"><slot /></div>
+          <ArticleReactions />
           {(previousPost || nextPost) && <nav class="post-nav" aria-label="同分类文章导航">
             {previousPost ? <a href={postUrl(previousPost.id)}><span>← 上一篇</span><strong>{previousPost.data.title}</strong></a> : <div />}
             {nextPost ? <a href={postUrl(nextPost.id)}><span>下一篇 →</span><strong>{nextPost.data.title}</strong></a> : <div />}

@@ -1,0 +1,117 @@
+---
+import {
+  GISCUS_CATEGORY,
+  GISCUS_CATEGORY_ID,
+  GISCUS_REPO,
+  GISCUS_REPO_ID,
+} from '../consts';
+
+const discussionsUrl = `https://github.com/${GISCUS_REPO}/discussions`;
+---
+
+<section
+  id="article-reactions"
+  class="article-reactions"
+  aria-labelledby="article-reactions-title"
+  data-article-reactions
+  data-repo={GISCUS_REPO}
+  data-repo-id={GISCUS_REPO_ID}
+  data-category={GISCUS_CATEGORY}
+  data-category-id={GISCUS_CATEGORY_ID}
+>
+  <header>
+    <p class="eyebrow">REACTIONS / 文章互动</p>
+    <h2 id="article-reactions-title">这篇文章对你有帮助吗？</h2>
+    <p>留下一个表情，或补充你的问题与想法。</p>
+  </header>
+  <div class="giscus-mount" data-giscus-mount aria-live="polite">
+    <p class="loading">正在加载文章互动…</p>
+    <noscript>
+      JavaScript 未启用，可前往 <a href={discussionsUrl}>GitHub Discussions</a> 参与讨论。
+    </noscript>
+  </div>
+</section>
+
+<script>
+  const root = document.querySelector<HTMLElement>('[data-article-reactions]');
+
+  if (root) {
+    const mount = root.querySelector<HTMLElement>('[data-giscus-mount]');
+    let loaded = false;
+
+    const showLoadError = () => {
+      if (!mount) return;
+      const message = document.createElement('p');
+      message.className = 'load-error';
+      message.append('互动组件加载失败，可前往 ');
+      const link = document.createElement('a');
+      link.href = `https://github.com/${root.dataset.repo}/discussions`;
+      link.textContent = 'GitHub Discussions';
+      message.append(link, ' 参与讨论。');
+      mount.replaceChildren(message);
+    };
+
+    const loadGiscus = () => {
+      if (loaded || !mount) return;
+      loaded = true;
+
+      const script = document.createElement('script');
+      script.src = 'https://giscus.app/client.js';
+      script.async = true;
+      script.crossOrigin = 'anonymous';
+      script.setAttribute('data-repo', root.dataset.repo ?? '');
+      script.setAttribute('data-repo-id', root.dataset.repoId ?? '');
+      script.setAttribute('data-category', root.dataset.category ?? '');
+      script.setAttribute('data-category-id', root.dataset.categoryId ?? '');
+      script.setAttribute('data-mapping', 'pathname');
+      script.setAttribute('data-strict', '1');
+      script.setAttribute('data-reactions-enabled', '1');
+      script.setAttribute('data-emit-metadata', '0');
+      script.setAttribute('data-input-position', 'top');
+      script.setAttribute('data-theme', 'noborder_light');
+      script.setAttribute('data-lang', 'zh-CN');
+      script.setAttribute('data-loading', 'lazy');
+      script.addEventListener('error', showLoadError, { once: true });
+      mount.replaceChildren(script);
+    };
+
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          observer.disconnect();
+          loadGiscus();
+        },
+        { rootMargin: '600px 0px' },
+      );
+      observer.observe(root);
+    } else {
+      loadGiscus();
+    }
+  }
+</script>
+
+<style>
+  .article-reactions {
+    margin-top: 52px;
+    padding-top: 34px;
+    border-top: 1px solid var(--line);
+  }
+  header { margin-bottom: 24px; }
+  header .eyebrow { margin-bottom: 8px; font-size: 9px; color: var(--accent); }
+  h2 { margin: 0 0 8px; font-size: 20px; letter-spacing: 0; }
+  header > p:last-child, .loading, .load-error {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .giscus-mount { min-height: 96px; }
+  .loading { padding: 24px 0; }
+  .load-error { padding: 18px 0; }
+  .load-error a, noscript a { color: var(--accent); text-decoration: underline; text-underline-offset: 4px; }
+  :global(.giscus) { width: 100%; }
+  @media (max-width: 480px) {
+    .article-reactions { margin-top: 42px; padding-top: 28px; }
+    h2 { font-size: 18px; }
+  }
+</style>
