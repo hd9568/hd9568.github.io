@@ -1,0 +1,280 @@
+---
+title: 'SparseCraft 论文精读：让大模型在真实硬件反馈中协同修改 RTL、存储与调度'
+description: '拆解 SparseCraft 如何把 LLM 放进 CHIA 闭环，通过合法性检查、周期级仿真、逐元素验证、逻辑综合和 Pareto 接纳，联合优化 Gemmini 的稀疏计算硬件与软件。'
+category: 'Research & Work'
+pubDate: '2026-11-05T11:30:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import PaperFigure from '../../components/PaperFigure.astro';
+import { withBase } from '../../lib/blog';
+import fig1 from '../../assets/sparsecraft/fig01-closed-loop.png';
+import fig2 from '../../assets/sparsecraft/fig02-metric-evolution.png';
+import fig3 from '../../assets/sparsecraft/fig03-wall-clock.png';
+import fig4 from '../../assets/sparsecraft/fig04-iteration-walkthrough.png';
+
+SparseCraft 研究的不是“让大模型生成一段能编译的 RTL”，而是更难的一步：把大模型放进一个由真实工具反馈驱动的硬件—软件协同优化闭环。每一轮中，模型可以修改 Gemmini 的 Chisel RTL、片上存储配置或稀疏 SpMM 调度；但候选设计只有通过作用域检查、合法性检查、编译、硬件展开、周期级仿真、全部输出的逐元素正确性验证和逻辑综合，才有资格进入下一轮。
+
+论文在一个固定的稀疏 DNN 层上运行 15 轮。最终设计相对已经支持块稀疏遍历的 Gemmini 基线，将周期数从 106,650 降到 50,862，片外流量从 3,211,264 B 降到 327,680 B，面积从 4.035 mm² 降到 3.115 mm²；基于实测计数器建立的能耗模型给出 5.61 倍 perf/W 和 11.8 倍 EDP 改善。
+
+这些数字不能全部称为“硬件实测”：周期和片外流量来自 Verilator 仿真，逻辑面积来自 Yosys，SRAM 宏面积由容量估计，能耗则由实测计数器代入模型计算。SparseCraft 的主要价值也不只是最终加速，而是展示了一个可审计的闭环：模型提出的成功、失败、重复和非法修改都被完整保留。
+
+> **发表状态说明。** SparseCraft 已被首届 [A³: Agentic Approaches to Architecture Workshop](https://agentic-arch.org/) 接收为 **Hackathon Spotlight Paper**，并列入 [A³ 官方议程](https://agentic-arch.org/program.html)。该 workshop 与 MICRO 2026 同期举办，但这不等于 MICRO 2026 主会论文。截至本文写作时，未检索到 IEEE Xplore、ACM Digital Library、DBLP 或带独立出版 DOI 的 proceedings 记录，因此更准确的表述是“A³ Workshop 正式接收并展示”。
+
+本文依据 **arXiv:2610.05037v1，2026 年 10 月 4 日版本**及官方开源实现撰写。原文与资料：[arXiv 页面](https://arxiv.org/abs/2610.05037) · <a href={withBase('papers/sparsecraft/sparsecraft-arxiv-v1.pdf')}>论文 PDF</a> · [代码仓库](https://github.com/SARCS-IIITH/SparseCraft) · <a href={withBase('papers/sparsecraft/a3-workshop-slides.pdf')}>A³ 演示幻灯片</a>。作者为 Rajatabha Chakraborty、M P Samartha、Vedant Pahariya 和 Priyesh Shukla。本文所用论文原图归原作者所有，仅转换展示格式，未修改图中数据。
+
+## 1. 问题不只是搜索参数，而是跨越三层设计
+
+稀疏加速器的常见设计空间包括阵列规模、片上存储容量、DMA 参数、队列深度、数据流和稀疏编码。传统设计空间探索往往先建立分析模型，再用搜索算法在模型上评估大量设计点。问题在于，稀疏执行的性能经常由跨层耦合决定：
+
+- 软件调度改变片外数据是否能够复用。
+- 存储容量改变分块方式，也可能改变执行周期。
+- 稀疏检测逻辑会增加面积，却可能减少乘法器翻转或片上读取。
+- 阵列几何必须与 kernel 的分块约定一致，否则硬件能编译、仿真也能结束，结果仍然可能错误。
+
+因此，只在分析模型上得到“最优参数”并不够。真正的候选设计必须落实为 RTL 和 kernel，并经过完整工具链。
+
+SparseCraft 选择 Gemmini 作为基础平台。Gemmini 是集成在 Chipyard 中、由 Chisel 生成的可配置矩阵乘加速器。本实验的基线是：
+
+| 部分 | 基线配置 |
+| --- | --- |
+| 计算阵列 | 16×16 weight-stationary systolic array |
+| scratchpad | 256 KB |
+| accumulator | 64 KB |
+| 软件 | 只遍历非零 16×16 块的 block-sparse SpMM kernel |
+| 时钟假设 | 所有设计固定按 2.0 ns 计算 |
+
+这一基线已经跳过全零块。SparseCraft 报告的收益，是在块稀疏 kernel 之上继续联合优化，而不是相对完全稠密执行的收益。
+
+## 2. 工作负载为什么仍有大量稀疏浪费
+
+实验计算：
+
+<Equation tex={String.raw`Y=AX,\qquad A\in\mathbb{Z}^{512\times512},\quad X\in\mathbb{Z}^{512\times64}.`} />
+
+A 来自 GraphChallenge sparse DNN 第一层矩阵 `n1024-l1.mtx` 的左上 512×512 区域，共 8,192 个非零元素，整体密度为 3.125%。矩阵被划分为 1,024 个 16×16 块，其中 512 个块被占用。
+
+关键在于：一个块只要含有一个非零，就会作为完整稠密块进入阵列。占用块内部的实际密度只有 6.25%，所以硬件发出了 8,388,608 次 MAC，真正有用的只有 524,288 次：
+
+<Equation tex={String.raw`\eta_{\mathrm{MAC}}=\frac{N_{\mathrm{useful}}}{N_{\mathrm{issued}}}=\frac{524{,}288}{8{,}388{,}608}=6.25\%.`} />
+
+软件已经消除了空块，块内 93.75% 的无效计算和数据读取仍然存在。这正是 RTL 稀疏机制可以继续发挥作用的空间。
+
+## 3. 闭环的核心：模型提出修改，工具链决定事实
+
+<PaperFigure src={fig1} pdf="papers/sparsecraft/fig01-closed-loop.pdf" alt="SparseCraft 在 CHIA 上的完整闭环与验证门" caption="原论文图 1：紫色为 LLM agent，蓝色为容器中的 EDA 工具，白色为 harness 检查。失败候选进入 repairer，测量结果经过诊断后形成下一轮 work order。" />
+
+第 1 轮只测量未修改基线。第 2～15 轮重复以下过程：
+
+1. **N74：完整性检查。** 重新计算合法性规则、Pareto 规则、能耗模型、指标解析器和 kernel 的哈希。任何评分基础发生变化都会中止运行。
+2. **N10：提出并实现修改。** proposer 读取父设计、历史记录、性能计数器、瓶颈诊断和策略提示，实际编辑 Chisel、配置或调度。
+3. **N13/N20/N21：廉价前置检查。** 确认修改没有越界、设计满足 27 条命名规则、候选未被评估过。
+4. **编译与分析过滤。** 先检查 Scala/Chisel 和 kernel 是否能够编译，再运行快速分析模型。
+5. **N30/N31/N32：生成可执行系统。** 展开 Chisel，构建 Verilator 模拟器并编译 SpMM kernel。
+6. **N50/N41：周期级执行与正确性验证。** 运行 Rocket core + Gemmini 的周期级仿真，读取周期和 DMA 计数器；将全部 32,768 个输出与 host 端 golden result 比较。
+7. **N52/N53：面积与能耗。** Yosys 综合与仿真并行运行；根据综合逻辑面积、SRAM 容量和运行计数器计算目标。
+8. **N60：接纳或回滚。** 非支配设计进入 Pareto 前沿并成为后续父设计；被拒绝的候选连同 RTL 一起精确回滚。
+9. **N61/N62：形成下一轮反馈。** harness 诊断瓶颈，记录模型对时间、能耗、面积和时钟方向的预测是否正确，再生成下一轮 work order。
+
+这个流程将“代码生成”和“设计空间搜索”连成一体。LLM 负责提出机制和完成跨文件修改，确定性的 harness 则拥有最终裁决权。
+
+## 4. 模型能看到什么，又能修改什么
+
+实验使用 Claude Opus 5，通过 Claude Code 运行 proposer 和 repairer。内置的 Read、Write、Bash 等工具全部关闭，模型只能调用 CHIA 暴露的三个 MCP 工具：
+
+- 受限 bash：只在 Chipyard 构建容器内执行，并限制可写文件。
+- status：读取上一轮被测设计及计数器。
+- history：读取此前每个候选及其结果。
+
+设计点不是任意文本，而是一个类型化状态，包含 28 个硬件字段和 6 个软件调度字段。硬件字段覆盖阵列几何、scratchpad、accumulator、DMA、队列及稀疏机制；软件字段描述 kernel 的分块和数据驻留方式。纯调度修改不需要重新展开硬件，可复用缓存。
+
+论文正文将可写范围概括为设计参数、PE 和 zero-bitmap unit 三处源码。模型不能修改 benchmark、正确性比较、指标解析器、能耗公式或接纳规则。这个隔离非常重要：如果优化者能够修改评分器，“通过验证”就不再构成证据。
+
+## 5. Prompt 不是一次性问题，而是结构化 work order
+
+proposer 的 system prompt 固定描述角色、工作负载、合法性边界、两类稀疏机制和输出协议。每轮变化的信息放在 work order 中，顺序固定为：
+
+- 当前父设计及其测量结果。
+- 根据计数器得到的瓶颈标签。
+- 与瓶颈匹配的策略模块。
+- 已尝试设计和失败原因。
+- 上一轮预测的评分。
+- 尚未尝试的候选方向。
+
+模型的回答必须包含三个可解析区段：
+
+| 区段 | 作用 |
+| --- | --- |
+| `CANDIDATES` | 列出若干备选修改，供失败后的后续轮次参考 |
+| `MUTATION` | 明确本轮真正实施了哪一个修改 |
+| `PREDICTION` | 分别预测 time、energy、area、clock 会变好、变差还是基本不变 |
+
+预测不会直接决定接纳，但会在测量后打分并反馈给模型。整个运行中，可评分的 36 个方向预测有 30 个正确，准确率为 83%。这说明模型不仅在写代码，也在逐步校准对系统的认识；但 36 个方向判断仍是很小的样本，不能据此推广为稳定的硬件性能预测能力。
+
+## 6. 两个由模型写入 RTL 的稀疏机制
+
+SparseCraft 允许 proposer 实现两类机制。
+
+### 6.1 T-A：zero-gated MAC
+
+当 PE 接收到零值稀疏操作数时，T-A 保持乘法器输入，避免无意义的内部翻转。它不跳过流水线槽位，所以周期不变；收益只体现在模型计算的动态能耗中。
+
+第 3 轮加入 T-A 后，逻辑面积增加 1.7%，能耗下降 6.6%。工作负载的块内零值很多，因此 gating opportunity 很大；但 MAC 能耗只占总能耗的一部分，收益不会等于零值比例。
+
+### 6.2 T-B：zero-bitmap unit
+
+T-B 用位图识别全零行，抑制稀疏操作数对应的 scratchpad 读取。当前接口只抑制读取，没有让队列和流水线提前完成，因此同样不减少周期。
+
+第 4 轮启用 T-B 后，面积增加 4.2%，模型能耗下降 17.5%。第 10、11 轮进一步把检测粒度从 16 缩小到 8 和 4，虽然运行时模型一度给出额外收益，但事后校正发现硬件接口只能跳过整行，细粒度位图不能兑现这部分能耗。最终结果因此按整行能力重新评分。
+
+这个校正很有代表性：闭环可以保证设计经过编译、仿真和输出验证，却不能自动保证能耗模型的抽象与微架构完全一致。模型本身也属于需要验证的系统组成。
+
+## 7. 正确性门为什么不可省略
+
+第 5 轮把 16×16 阵列改成 32×32。设计通过编译和周期级仿真，甚至能够产生完整输出，但 32,768 个输出中有 32,674 个错误。
+
+根因不是 Chisel 语法或硬件展开失败，而是软件仍按 16×16 块组织数据和发出命令。阵列维度改变后，kernel、数据打包和 Gemmini 命令协议没有同步变化。repairer 检查后报告 `NOT_ACTIONABLE`：在当前固定的 16×16 数据路径和可写范围内，没有可信的局部修复。
+
+这一轮说明三点：
+
+- “能编译”不能代表硬件功能正确。
+- “仿真能结束”也不能代表输出正确。
+- 硬件参数只有与软件表示、调度和接口约定共同变化才有意义。
+
+正确性检查使用 host core 计算的 golden result，并比较全部 32,768 个输出，而不是抽样。这样可以避免 kernel 与硬件以同一种错误方式产生“自洽结果”。
+
+## 8. Repairer 的职责是修复有证据的失败
+
+候选在门控链中失败后，harness 先分类：作用域、合法性、编译、展开、kernel、数值分歧、挂起或基础设施故障。基础设施故障不会交给模型，避免把机器问题误当成设计问题。
+
+repairer 获得：
+
+- 失败类别和裁剪后的关键日志。
+- proposer 对本轮机制的原始说明。
+- 父设计与失败设计的完整状态。
+- 同一轮此前所有修复尝试及其复测结果。
+
+每次修复后，候选必须从作用域检查开始重新跑完整门控链。每轮最多修复 3 次；如果无法明确根因，repairer 应返回 `NOT_ACTIONABLE`，而不是做高成本猜测。harness 还会独立判断修复是否只是撤销 proposer 的修改。
+
+本次 15 轮运行触发 3 次 repairer，均返回 `NOT_ACTIONABLE`。因此，论文展示的是“修复框架能够拒绝无依据修改”，并没有展示成功自动修复一个候选。官方 workshop 幻灯片中的故障注入修复实验属于后续扩展，不能倒推为 arXiv v1 主实验的结果。
+
+## 9. 哪些量被测量，哪些量来自模型
+
+| 指标 | 来源 | 解释边界 |
+| --- | --- | --- |
+| cycles | Verilator 周期级 SoC 仿真 | 不是硅后测量 |
+| off-chip bytes | Gemmini DMA 计数器 | 来自被测执行 |
+| functional equivalence | 32,768 个输出逐一比较 | bit-exact |
+| logic area | Yosys + NanGate45 | 映射后 cell area，不是版图面积 |
+| SRAM area | 按容量和 SRAM 宏数据估计 | 与逻辑面积相加 |
+| energy / power / perf/W / EDP | 计数器驱动的能耗模型 | 不是功耗工具或芯片测量 |
+| timing / Fmax | OpenSTA 有记录但不采用 | 缺少布局、缓冲和尺寸优化，结果无效 |
+
+能耗模型按三类活动计费：实际发出的 MAC、片上 SRAM 字节和片外 DRAM 字节。其结构可简化写为：
+
+<Equation tex={String.raw`E=N_{\mathrm{MAC}}e_{\mathrm{MAC}}+B_{\mathrm{SRAM}}e_{\mathrm{SRAM}}(S)+B_{\mathrm{DRAM}}e_{\mathrm{DRAM}}.`} />
+
+其中每次 MAC、每个 SRAM 字节和每个 DRAM 字节分别按 0.30 pJ、1.2 pJ 和 22 pJ 计费；SRAM 单次访问代价还随总 SRAM 容量缩放：
+
+<Equation tex={String.raw`e_{\mathrm{SRAM}}(S)=1.2\sqrt{\frac{\max(S,32\,\mathrm{KB})}{256\,\mathrm{KB}}}\ \mathrm{pJ/byte}.`} />
+
+T-A 从发出 MAC 中扣除被门控的切换能耗，T-B 从片上流量中扣除能够跳过的整行读取。由于 DRAM 单位能耗最高，第 2 轮的软件数据驻留首先带来最大幅度的能耗下降。
+
+## 10. 15 轮搜索实际走过了什么路径
+
+<PaperFigure src={fig4} pdf="papers/sparsecraft/fig04-iteration-walkthrough.pdf" alt="SparseCraft 15 轮设计谱系与每轮修改" caption="原论文图 4：绿色实线节点为接纳设计，红色虚线分支为失败、重复或非法候选。节点给出相对 perf/W 和面积。" />
+
+| 轮次 | 修改 | 结果 |
+| --- | --- | --- |
+| 1 | 测量基线 | 106,650 cycles，3,211,264 B 片外流量 |
+| 2 | 将完整 X 保留在 scratchpad | 接纳；片外流量减少 9.8 倍，周期减少 1.34 倍 |
+| 3 | T-A zero-gated MAC | 接纳；面积 +1.7%，模型能耗 -6.6% |
+| 4 | T-B zero-row skip | 接纳；面积 +4.2%，模型能耗 -17.5% |
+| 5 | 阵列 16×16 → 32×32 | 32,674/32,768 个输出错误 |
+| 6–7 | 再次提出相同 32×32 设计 | 重复，未重新执行完整评测 |
+| 8 | scratchpad 256 → 128 KB | 接纳；周期意外下降 36% |
+| 9 | scratchpad 128 → 64 KB | 接纳；面积和模型能耗继续下降 |
+| 10–11 | ZBU 粒度 16 → 8 → 4 | 接纳，但校正后没有真实可兑现的额外能耗收益 |
+| 12 | `b_blocks` 从 auto 改为 4 | 与 auto 的解析结果相同，无性能变化 |
+| 13 | 关闭 normalizer | 违反 T0 合法性规则 |
+| 14 | ZBU 粒度 4 → 2 | 位图超过预算，违反 T0 规则 |
+| 15 | accumulator 64 → 32 KB | 接纳；形成最终设计 |
+
+第 6、7 轮重复第 5 轮，原因是运行在第 7 轮后暂停并恢复，而当时失败候选没有进入 proposer 的恢复历史。作者已在代码中修复恢复逻辑，但这次公开轨迹保留了原始重复。
+
+第 8 轮更值得谨慎：scratchpad 从 256 KB 降到 128 KB 后，周期从 79,433 降到 50,862，降幅为 36%。V1 运行中相同修改也出现了近似跳变，全部输出验证通过，但作者仍未解释该机制。不能简单写成“更小 SRAM 更快”；目前能确认的是结果可重复、功能正确，因果尚未定位。
+
+## 11. 最终结果应该如何阅读
+
+<PaperFigure src={fig2} pdf="papers/sparsecraft/fig02-metric-evolution.pdf" alt="SparseCraft 搜索过程中周期、流量、面积、能耗和综合指标的变化" caption="原论文图 2：指标均相对第 1 轮归一化，阶梯线表示每轮结束后保留的设计。" />
+
+| 指标 | 基线 | 第 15 轮 | 变化 | 性质 |
+| --- | ---: | ---: | ---: | --- |
+| cycles | 106,650 | 50,862 | 2.10× fewer | 仿真测量 |
+| off-chip bytes | 3,211,264 | 327,680 | 9.8× less | 计数器测量 |
+| area | 4.035 mm² | 3.115 mm² | -22.8% | 逻辑综合 + SRAM 估计 |
+| energy | 95.67 µJ | 17.04 µJ | 5.61× less | 模型 |
+| performance | 4.92 GOPS | 10.31 GOPS | 2.10× | 固定时钟推导 |
+| perf/W | 10.96 GOPS/W | 61.5 GOPS/W | 5.61× | 模型 |
+| perf/area | 1.22 GOPS/mm² | 3.31 GOPS/mm² | 2.72× | 混合推导 |
+| EDP | 20.41 nJ·s | 1.73 nJ·s | 11.8× less | 模型 |
+
+最终配置保留 X 驻留调度、T-A 和 T-B，将 scratchpad 从 256 KB 缩到 64 KB、accumulator 从 64 KB 缩到 32 KB。
+
+最大的片外流量收益来自第 2 轮的软件修改，RTL 机制主要改善模型能耗，存储缩容主要改善面积。这正是“协同优化”的具体含义：最终收益不是一个聪明参数完成的，而是软件复用、稀疏微架构和容量配置逐层叠加。
+
+## 12. 时间和成本：闭环并不便宜
+
+<PaperFigure src={fig3} pdf="papers/sparsecraft/fig03-wall-clock.pdf" alt="SparseCraft 15 轮运行的 wall-clock 时间线" caption="原论文图 3：运行在第 7、8 轮之间暂停；综合与仿真重叠，因此不计入关键路径。" />
+
+扣除中途暂停，运行活跃时间为 328 分钟，平均每轮 21.9 分钟。17 个 LLM session 共运行约 66 分钟、138 个 agent turn，输出 300,013 tokens，记录成本为 15.78 美元。
+
+关键路径时间中：
+
+- 周期级仿真约占 75%。
+- proposer 与 repairer 合计约占 20%。
+- 硬件展开约占 5%。
+- 综合累计忙碌约 95 分钟，但与仿真并行，基本不增加关键路径。
+
+这意味着系统效率的主要瓶颈不是 LLM 推理，而是对真实候选进行高可信评测。廉价分析模型仍然有价值，但更适合作为前置过滤器，而不是替代最终测量。
+
+## 13. Workshop 幻灯片展示了扩展结果，但不能与 v1 混用
+
+A³ 官方演示幻灯片包含明显晚于 arXiv v1 的扩展实验：工作负载从 1 个增加到 3 个，加入 expert、random、greedy 和 MOTPE 对照，区分 standard/aggressive 搜索轨道，并报告故障注入下的 repair 结果。
+
+这些内容与本地源码和 arXiv v1 的单工作负载、单次 15 轮轨迹不一致。幻灯片中的扩展结果可视为 workshop 展示阶段的新证据，但在新的论文版本或完整实验记录公开前，不应直接并入 v1 的主结果。尤其需要注意：
+
+- 每个方法看起来仍是单次运行，未给出方差。
+- 多工作负载结果不能用来改写 v1 的实验设置。
+- 幻灯片中的 10/10 injected-fault repair 不等于 v1 主运行成功修复候选；v1 的 3 次 repair 均为 `NOT_ACTIONABLE`。
+
+这类版本边界并非措辞细节。对于快速演进的 agentic system，论文、仓库和演示材料可能分别代表不同时间点，数字必须绑定到具体版本。
+
+## 14. 贡献、局限与可复现性判断
+
+SparseCraft 的主要贡献可以概括为四点：
+
+- **把 LLM 放进闭环，而不是放在闭环之外。** 模型每轮读取上轮实测反馈，修改真实工程，再接受下一次工具评测。
+- **同时开放硬件、存储和软件调度。** 这使模型能先减少片外流量，再添加稀疏 RTL，最后回收过度配置的存储。
+- **把失败当作正式记录。** 非法设计、错误输出、重复候选和 repair 判断都进入历史，不只展示最好结果。
+- **用不可修改的 harness 建立信任边界。** 正确性、指标和接纳规则独立于生成模型。
+
+当前证据也有清晰限制：
+
+- arXiv v1 的主要结果只有一个 512×512 工作负载和一次 agent 轨迹。
+- 缺少与随机搜索、贝叶斯优化或人类专家在同预算下的正文对照。
+- 周期来自 Verilator，不是 FPGA 或流片测量。
+- 面积没有经过 place-and-route；Fmax 和功耗工具结果不可用。
+- 能耗依赖手工模型，且已发生过一次粒度建模校正。
+- 第 8 轮的周期骤降没有得到根因解释。
+- 主运行没有成功 repair 案例，repairer 的有效性主要体现为避免盲修。
+
+开源仓库给出了 loop、prompt、合法性规则、能耗模型、测试和运行记录，工程可审计性较好；但复现完整结果仍需要 Chipyard/Gemmini 构建环境、容器、集群资源、相同模型访问方式以及数小时仿真时间。
+
+## 15. 总结
+
+SparseCraft 最有价值的地方，不是证明 LLM 已经能够独立设计最优稀疏加速器，而是给出了一种更可信的 agentic hardware co-design 组织方式：
+
+<Equation tex={String.raw`\text{提出修改}\rightarrow\text{静态门控}\rightarrow\text{真实构建}\rightarrow\text{周期仿真}\rightarrow\text{逐输出验证}\rightarrow\text{综合与评分}\rightarrow\text{反馈}.`} />
+
+LLM 负责跨层提出和实现修改，确定性工具链负责建立事实。最终设计中的三个有效方向也具有明确分工：X 驻留减少 DRAM 流量，T-A/T-B 利用块内细粒度零值降低模型能耗，存储缩容回收面积。与此同时，错误的 32×32 阵列、重复候选、能耗校正和未解释的周期跳变都提醒：agent 能扩大搜索和实现能力，但不会消除实验设计、测量边界与因果分析的责任。
