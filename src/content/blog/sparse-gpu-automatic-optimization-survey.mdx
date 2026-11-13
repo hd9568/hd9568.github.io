@@ -1,0 +1,326 @@
+---
+title: '面向 GPU 稀疏矩阵计算的自动优化：表示、编译、执行与智能体搜索'
+description: '以 SpMM 为主线，梳理 38 篇代表性论文，比较稀疏表示与编译、Tensor Core 执行、成本模型和智能体搜索，并讨论正确性、预处理与搜索预算的评价边界。'
+category: 'Research & Work'
+pubDate: '2026-11-13'
+---
+
+import { Image } from 'astro:assets';
+import Equation from '../../components/Equation.astro';
+import { withBase } from '../../lib/blog';
+import figOverview from '../../assets/sparse-gpu-survey/fig01-optimization-overview.png';
+import figSparseTIR from '../../assets/sparse-gpu-survey/fig02-sparsetir-compilation.png';
+import figFlashSparse from '../../assets/sparse-gpu-survey/fig03-flashsparse-mapping.png';
+import figSparseDitto from '../../assets/sparse-gpu-survey/fig04-sparseditto-workflow.png';
+
+文献核对截至 **2026 年 11 月 13 日**。本文从 62 篇候选文献中选取 38 篇代表性工作，按问题与方法组织讨论。涉及实验的结论均来自论文报告，本文未独立复现 GPU 实验。
+
+## 摘要
+
+稀疏矩阵计算的 GPU 性能取决于非零元素如何存储、任务如何分配，以及数据搬运能否跟上计算。相同的非零数可以对应完全不同的访存和负载分布；压缩更紧凑的格式也可能增加索引解码或输出归约开销。本文以稀疏矩阵与稠密矩阵乘法为主线，梳理格式抽象、稀疏编译、Tensor Core 执行和自动搜索的主要方法，讨论大语言模型参与代码生成与优化决策时的接口、反馈和预算管理。比较重点放在方法解决的问题、引入的代价及实验结论的适用条件，并说明正确性验证、预处理成本和搜索成本如何影响性能评价。
+
+## 1. 问题与范围
+
+稀疏矩阵与稠密矩阵乘法，通常记为 SpMM，计算
+
+<Equation tex={String.raw`C_{M\times N}=A_{M\times K}B_{K\times N}.`} />
+
+其中 <Equation inline tex="A" /> 只存储非零元素及其位置，<Equation inline tex="B" /> 和 <Equation inline tex="C" /> 通常采用稠密存储。一个非零元素 <Equation inline tex="A_{ik}" /> 会参与输出行 <Equation inline tex="C_{i,:}" /> 的多个乘加，因此稠密矩阵的列数 <Equation inline tex="N" /> 决定了稀疏数据的复用机会。SpMV 对应矩阵与向量相乘；SpGEMM 的两个输入都稀疏，还需要处理输出非零结构。三者可以共享格式和搜索思想，计算与归约代价却有明显差别。
+
+压缩稀疏行格式（Compressed Sparse Row，CSR）按行存储非零值、列索引和行起始位置。它省去了零值存储，但 GPU 执行仍要读取索引、间接访问 <Equation inline tex="B" />，并处理长短不一的行。相同的非零数 `nnz`，分布在许多短行或少数长行中，会产生不同的线程利用率；相邻行共享列索引的程度，也会改变稠密数据的缓存复用。
+
+分析格式时需要区分三个量：数学上有多少非零元素，物理存储中有多少槽位，硬件实际计算了多少元素。块格式可能在槽位中填零，Tensor Core 也会对填充后的矩阵块执行乘法。较少的索引访问可以补偿一部分冗余计算，但这种收益取决于块密度、<Equation inline tex="N" />、数据精度和 GPU 架构。
+
+GPU 上有两类常用执行资源。SIMT 路径将工作分给同时执行指令的线程，适合细粒度、不规则的数据访问；Tensor Core 以固定形状的矩阵块执行乘加，需要将稀疏数据组织成相应的操作数。硬件支持的 2:4 结构化稀疏要求每组四个元素满足规定的非零模式，任意稀疏矩阵通常不满足这一约束。本文讨论的多项方法使用稠密 Tensor Core 指令处理重新组织后的稀疏块。
+
+全文围绕三个问题组织讨论：表示如何成为可编译、可搜索的对象；表示与 GPU 执行如何共同决定代价；自动搜索如何利用模型和实测反馈作出决策。SpMV、CPU 稀疏编译和其他加速器上的工作用于分析相邻方法，其性能结果分别保留原有任务与平台边界。
+
+图 1 概括三条技术路线及其相互关系。第 2 节讨论表示与编译，第 3 节讨论 GPU 执行，第 4—5 节讨论传统自动优化与智能体搜索，第 6 节统一评价口径，第 7—8 节讨论研究问题与主要结论。
+
+<figure style={{ margin: '28px 0' }}>
+  <a href={figOverview.src} target="_blank" rel="noopener" aria-label="打开图 1 的原尺寸图片">
+    <Image src={figOverview} alt="稀疏矩阵计算的技术演进与联合优化关系" format="webp" quality={90} loading="lazy" />
+  </a>
+  <figcaption style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.8' }}>
+    <strong>图 1.</strong> 稀疏矩阵计算的技术演进与联合优化关系。左侧按时间区间展示代表性工作，文献编号对应本文参考文献，实线与虚线边框分别表示已发表工作和预印本；右侧概括表示、执行与搜索之间的联系，底部列出共同评价条件。各技术路线持续共存，时间箭头表示研究方向的推进。<a href={figOverview.src} target="_blank" rel="noopener">查看原图 ↗</a>
+  </figcaption>
+</figure>
+
+## 2. 表示与编译：把格式变成可操作的程序对象
+
+### 2.1 从格式名称到存储能力
+
+TACO 将张量计算表达式与存储结构分开，通过逐维描述稠密或压缩的存储层级来生成遍历代码 [1](#ref-1)。这样，编译器可以根据数据结构安排循环，无须为每个完整格式重写算子。
+
+后续的格式抽象工作进一步明确了每一层应提供的能力，例如遍历已存储坐标、定位指定坐标，以及组装输出数据；有序、唯一、紧凑等属性决定了哪些代码生成方式可用 [2](#ref-2)。增加一种格式时，需要说明这些能力及其约束。单独提供一个格式名称，无法让编译器推导访问和构造过程。
+
+稀疏循环还涉及两种空间。坐标空间描述矩阵中的行列位置，位置空间描述压缩数组中的存储位置。前者便于表达计算语义，后者便于按非零数切分工作。《A Sparse Iteration Space Transformation Framework》通过保留两者之间的映射，支持循环拆分、重排和并行化 [3](#ref-3)。按位置切分可以缓解行长度不均衡，但一个输出行可能被多个任务共同处理，需要原子操作或分段归约。负载均衡因此必须与输出累加成本一起评价。
+
+### 2.2 格式转换连接逻辑表示与物理布局
+
+格式转换需要解决坐标如何重映射、各层需要多少容量，以及索引和值如何组装。《Automatic Generation of Efficient Sparse Tensor Format Conversion Routines》将这三个过程分开描述，从格式规格生成转换例程，减少逐对编写源格式到目标格式转换代码的工作 [4](#ref-4)。
+
+UniSparse 进一步区分逻辑上的元数据树与物理布局，用索引映射、查询、结构变换和布局操作描述格式定制 [5](#ref-5)。这一分离允许同一逻辑结构采用不同的数组组织，也使格式变化能够同时作用于转换和计算代码。其跨平台实验说明了抽象的表达能力，具体平台上的性能仍依赖对应后端。
+
+转换例程与计算 kernel 必须对物理布局达成一致。索引的宽度、块内值的顺序、填充规则、行重排后的恢复映射，都属于这一约定。只调整计算循环而沿用不匹配的元数据，可能产生合法地址上的错误结果，普通编译检查无法发现这类问题。
+
+### 2.3 多阶段 IR 为联合优化保留信息
+
+中间表示（IR）是编译过程内部描述程序的形式。SparseTIR 将稀疏计算依次降低为坐标空间、位置空间和普通循环层面的 IR [6](#ref-6)。高层可以做格式分解，将不同区域转换成适合各自执行方式的子格式；中层暴露稀疏遍历；低层安排线程、缓存和硬件指令。
+
+<figure style={{ margin: '28px 0' }}>
+  <a href={figSparseTIR.src} target="_blank" rel="noopener" aria-label="打开图 2 的原尺寸图片">
+    <Image src={figSparseTIR} alt="SparseTIR 的多阶段稀疏编译流程" format="webp" quality={90} loading="lazy" />
+  </a>
+  <figcaption style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.8' }}>
+    <strong>图 2.</strong> SparseTIR 原 Figure 2，取自 <a href="https://arxiv.org/pdf/2207.04606v4">arXiv 2207.04606v4</a>，PDF 第 3 页 <a href="#ref-6">[6]</a>。右侧展示从坐标空间到位置空间、再到循环 IR 的优化过程。左侧是作者设置的单阶段方案对照。<a href={figSparseTIR.src} target="_blank" rel="noopener">查看原图 ↗</a>
+  </figcaption>
+</figure>
+
+分阶段处理使格式选择与低层调度可以在各自需要的信息仍然可见时进行。例如，将 CSR 分解成块压缩行格式 BSR 与每行分配固定槽位的 ELL 后，子计算可以采用不同的线程映射。此处仍有明确的接口边界：SparseTIR 论文中的格式分解能够生成数据复制和计算过程，新格式的 `indices`、`indptr` 等元数据需要用户预计算，或接入其他转换系统。格式表达能力与完整的元数据生成能力应分别判断。
+
+Finch 将抽象扩展到带控制流的稀疏与结构化张量程序 [7](#ref-7)。它用符号化的迭代片段描述连续区间、条件分支和查找等行为，使层级数据结构能够与控制流共同参与编译。对于自动优化，表示越丰富，越需要准确说明可执行边界：哪些组合可以生成转换代码，哪些循环能够匹配后端指令，哪些变换会改变输出组装方式。
+
+这些编译工作的区别，主要在于将哪一部分隐含规则变成显式接口：
+
+| 代表工作 | 显式描述的对象 | 支持的主要决策 | 需要区分的能力边界 |
+| --- | --- | --- | --- |
+| TACO 与格式抽象 [1](#ref-1)、[2](#ref-2) | 逐维存储层级、访问能力与属性 | 遍历、定位与输出组装 | 表达格式不等于已有全部高性能实现 |
+| 自动格式转换 [4](#ref-4) | 坐标重映射、容量计算与数据组装 | 从格式规格生成转换例程 | 转换布局必须与计算代码一致 |
+| UniSparse [5](#ref-5) | 逻辑元数据与物理布局 | 格式定制、转换与计算生成 | 跨平台抽象仍依赖各后端实现 |
+| SparseTIR [6](#ref-6) | 坐标空间、位置空间与循环 IR | 格式分解与低层调度 | 新格式元数据仍需预计算或外部转换系统 |
+| Finch [7](#ref-7) | 控制流与稀疏、结构化数据 | 将分支、区间和查找纳入编译 | 表达范围与后端可执行范围需要分别说明 |
+
+## 3. GPU 执行：压缩、规则化与负载分配
+
+### 3.1 CSR 路径利用稠密列维度的复用
+
+Sputnik 在稀疏 GPU kernel 中采用线程组分块、向量化访问和行调度等方法，通过行分组与任务组合改善不同层次的负载分布 [8](#ref-8)。GE-SpMM 保留 CSR，利用同一稀疏行上的多个线程处理不同稠密列，并通过行缓存和 warp 合并减少重复加载 [9](#ref-9)。这里的 warp 是 GPU 的基本线程执行组。
+
+这类方法的核心收益来自 <Equation inline tex="N" /> 维复用：多个输出列共享同一组稀疏值和列索引。<Equation inline tex="N" /> 较小时，额外的协作和缓存操作可能难以摊销；<Equation inline tex="N" /> 较大时，输出分块、寄存器占用和重复读取 <Equation inline tex="B" /> 又会成为新的限制。因此，某种映射在 SpMV 上的优势，不能直接推导成 SpMM 上的优势。
+
+### 3.2 Tensor Core 路径用规则计算交换组织成本
+
+TC-GNN 将一组行访问的邻居列压紧，建立原列索引与局部块位置之间的映射，再组织成 Tensor Core 可处理的矩阵块 [10](#ref-10)。它保留图计算语义，通过局部数据组织减少稀疏列范围带来的浪费。代价来自映射生成、稠密数据收集和块内填充。
+
+DTC-SpMM 从格式和执行两侧减少这些代价 [11](#ref-11)。行相似性分组提高块内有效元素比例，局部列索引采用 8 位压缩，簇重排改善缓存访问。其流水线使用异步拷贝搬运稀疏数据，并让部分稠密操作数直接进入寄存器。索引压缩降低了元数据流量，重排增加了预处理；寄存器中的操作数布局也必须与矩阵指令一致。
+
+FlashSparse 利用
+
+<Equation tex={String.raw`AB=(B^{T}A^{T})^{T}`} />
+
+交换矩阵乘法的操作数角色 [12](#ref-12)。图 3 的指令形状为 `m16n8k8`：稀疏矩阵转到右操作数后，可以利用较小的 <Equation inline tex="n" /> 维组织稀疏行组。论文据此采用 8×1 的稀疏向量粒度，减少较大行组造成的填充计算；这一粒度对应其使用的指令和精度条件。
+
+<figure style={{ margin: '28px 0' }}>
+  <a href={figFlashSparse.src} target="_blank" rel="noopener" aria-label="打开图 3 的原尺寸图片">
+    <Image src={figFlashSparse} alt="FlashSparse 通过操作数交换调整矩阵块与寄存器映射" format="webp" quality={90} loading="lazy" />
+  </a>
+  <figcaption style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.8' }}>
+    <strong>图 3.</strong> FlashSparse 原 Figure 4，取自 <a href="https://arxiv.org/pdf/2412.11007v1">arXiv 2412.11007v1</a>，PDF 第 4 页 <a href="#ref-12">[12]</a>。图中展示计算块及线程寄存器映射，字母 A、B、C 对应局部操作数与结果。<a href={figFlashSparse.src} target="_blank" rel="noopener">查看原图 ↗</a>
+  </figcaption>
+</figure>
+
+操作数交换还要求调整线程的数据读取和输出写回方式。论文通过转置访问与寄存器映射实现这一计算组织，不能将图中的转置解释为完整稠密矩阵 <Equation inline tex="B" /> 的全局预转置。较小的稀疏粒度减少冗余计算后，访存是否合并、输出写回是否高效，仍会决定最终收益。
+
+### 3.3 异步执行依赖可搬运的物理布局
+
+异步流水线让下一批数据的搬运与当前批次的计算重叠。Hopper 架构提供 Tensor Memory Accelerator（TMA）数据搬运机制和 warp group 级的 WGMMA 异步矩阵指令，但使用它们需要满足数据布局、同步和资源约束。
+
+Voltrix 将压缩表示、向量加载、生产者与消费者 warp 分工、多层流水线结合起来 [13](#ref-13)。其任务划分兼顾输入块的复用和输出工作的均衡，并减少跨任务的输出原子累加。生产者负责准备数据，消费者负责计算；两者之间的共享内存占用和等待关系影响可同时驻留的任务数量。
+
+AsyncSparse 比较块格式与窗口压缩格式在异步架构上的实现 [14](#ref-14)。窗口压缩通过局部列映射减少跨度，但其 WCSR 路径中，稀疏 <Equation inline tex="A" /> 经 TMA 搬运，稠密 <Equation inline tex="B" /> 仍由线程协作收集。格式使部分数据具备规则搬运条件，间接索引访问仍需专门处理。论文中的 H100、较大 <Equation inline tex="N" /> 和 BF16 实验条件，也限定了相关性能结论。
+
+局部结构差异较大时，可以让不同执行资源处理不同区域。RSH-SpMM 对行结构做局部重排，将适合组成 Tensor Core 块的行与剩余行分流 [15](#ref-15)。两条 kernel 路径负责不相交的输出行，避免了两种计算结果之间的合并归约。分流效果取决于行长度和邻近行的列重合情况，调度与多次启动的成本也要计入。
+
+### 3.4 动态稀疏需要在线组织数据
+
+上述重排和转换通常假设结构可以复用。动态模型中的非零位置可能随输入变化，离线优化得到的结构难以直接沿用。
+
+PIT 利用满足置换不变性规则的计算轴，在读取和写回时重组微块，并将微块组织成较大的稠密计算块 [16](#ref-16)。置换不变性表示在规定条件下调整元素顺序能够保持计算结果；它有适用轴和操作的限制。PIT 的在线检测、索引和重组开销是执行过程的一部分。动态场景需要比较完成整次计算的成本，而静态场景还可以通过多次调用摊销转换费用。
+
+执行方法可以按它们减少的开销，以及为此引入的组织成本进行比较：
+
+| 方法 | 主要组织方式 | 试图减少的开销 | 评价时需要计入的代价 |
+| --- | --- | --- | --- |
+| Sputnik、GE-SpMM [8](#ref-8)、[9](#ref-9) | CSR 行内分块、缓存与线程协作 | 稀疏值和索引的重复加载、负载不均衡 | 协作成本、输出分块与寄存器占用 |
+| TC-GNN [10](#ref-10) | 邻居列压紧与局部块映射 | 原始列跨度带来的 Tensor Core 填充 | 映射生成、稠密数据收集与块内填充 |
+| DTC-SpMM [11](#ref-11) | 相似行分组、索引压缩、重排与流水线 | 元数据流量、填充与访存等待 | 预处理及指令所需的寄存器布局 |
+| FlashSparse [12](#ref-12) | 操作数交换与 8×1 稀疏向量 | 较大行组造成的冗余计算 | 转置访问、寄存器映射与输出写回 |
+| Voltrix、AsyncSparse [13](#ref-13)、[14](#ref-14) | 压缩布局与异步生产者—消费者执行 | 数据搬运等待与任务不均衡 | 共享内存、同步、数据收集与布局约束 |
+| RSH-SpMM [15](#ref-15) | 按行结构分流到两条执行路径 | 单一执行方式对局部结构的不适配 | 重排、调度与多次 kernel 启动 |
+| PIT [16](#ref-16) | 在线检测、索引与微块重组 | 动态稀疏无法复用离线布局的问题 | 每次调用中的检测和组织成本 |
+
+## 4. 传统自动优化：搜索空间与成本模型
+
+### 4.1 从选择现成格式到组合设计步骤
+
+AlphaSparse 用 Operator Graph 描述格式与 kernel 的设计路径，将划分、压缩、任务分配和参数配置组织成可组合步骤，再通过多层搜索与剪枝选择实现 [17](#ref-17)。它面向 SpMV，提供了自动构造表示和计算程序的方法依据。对于 SpMM，相同的设计步骤还需要加入稠密列分块与数据复用约束。
+
+SRSparse 通过问题定义和调度语言，分别生成 Format IR 与 Kernel IR，并共同生成格式转换与计算代码 [18](#ref-18)。其半环计算允许替换通常的乘法和加法规则，因此设计空间还要表达相应的归约语义。
+
+在稀疏深度学习与 SpMM 中，STile 研究多层稀疏格式分解和混合块搜索 [19](#ref-19)，LiteForm 研究轻量的格式组合与预测决策 [20](#ref-20)。这类工作的价值在于定义可执行的组合空间，并控制探索代价。增加可组合操作会扩大表达能力，也会提高候选数量；代价模型与剪枝规则因而成为系统设计的一部分。
+
+### 4.2 结构性工作量与硬件延迟分别建模
+
+稀疏程序的循环顺序可以改变被访问的坐标集合，进而改变渐近复杂度。《Autoscheduling for Sparse Tensor Algebra with an Asymptotic Cost Model》用符号集合比较候选的结构性成本，保留渐近复杂度上互不支配的方案，再生成代码 [21](#ref-21)。该模型忽略缓存分块、并行化和常数项，适合排除工作量明显不合理的方案，无法精确预测 GPU 上的最终延迟。
+
+AutoTVM 使用学习得到的成本模型选择值得测量的候选，再以硬件测量更新模型 [22](#ref-22)。Ansor 将高层计算结构与低层参数分开表示，结合进化搜索、成本预测和任务预算分配，探索更大的张量程序空间 [23](#ref-23)。这些方法建立了“预测筛选—实测更新”的流程。应用到稀疏计算时，模型还需要处理矩阵分布、填充比例和索引访问，原有的通用张量调度空间不能自动覆盖所有稀疏表示。
+
+两类成本可以按层次使用。结构模型先估计存储、遍历和计算规模，实测模型再区分访存复用、资源占用及任务分布相近的候选。静态工作量与实测时间发生偏离时，应检查模型遗漏的因素，而不能只凭非零数解释性能。
+
+### 4.3 快速决策与精确求解各有边界
+
+Galley 将稀疏张量优化与数据库查询优化联系起来 [24](#ref-24)。它利用输入统计估计中间结果规模，在逻辑层选择代数分解和聚合顺序，在物理层选择循环、输出格式和访问方式。其 CPU 与 Finch 实现说明了统计信息如何作用于结构决策，相关结果需要与 GPU kernel 性能分开讨论。
+
+Scorch 将计算、工作区和转置等结构性成本用于快速自动调度 [25](#ref-25)。快速启发式减少了每次调用的决策开销，但分布偏斜等情况可能偏离模型假设。Twill 则对一类 Tensor Core 程序的软件流水线与 warp 分工建立约束模型，通过求解器寻找最优调度 [26](#ref-26)。这种最优性属于模型、程序类别和约束范围，不能扩展为任意稀疏 kernel 的实测全局最优。
+
+自动决策的接口由此逐渐清晰：高层选择算法与表示，中层安排并行任务和数据流，低层配置指令、同步及资源。下一步决策可以使用规则、成本模型、求解器或大语言模型；接口是否保留足够的语义与代价信息，直接影响搜索的可靠性。
+
+## 5. 大语言模型与智能体搜索
+
+### 5.1 搜索对象决定可控程度
+
+大语言模型可以直接编辑源码，也可以输出由编译器执行的计划。CudaForge 采用代码生成与反馈判断分工，根据编译错误、数值测试和硬件分析改写 CUDA [28](#ref-28)。CuTeGen 借助 CuTe 的布局、分块和数据搬运抽象生成 C++/CUDA kernel，并区分调试和性能优化阶段 [29](#ref-29)。源码接口允许灵活修改实现，同时需要验证每次修改是否破坏计算或同步。
+
+SparseDitto 将表示、执行调度和硬件参数组织成统一计划 [27](#ref-27)。表示部分记录布局与元数据，调度部分描述并行分解和数据流，硬件参数约束分块及资源。结构特征和表示开销用于模板排序与计划综合，智能体随后参与 CUDA 代码生成，并根据数值验证、运行检查和性能分析（profiling）的反馈迭代。
+
+<figure style={{ margin: '28px 0' }}>
+  <a href={figSparseDitto.src} target="_blank" rel="noopener" aria-label="打开图 4 的原尺寸图片">
+    <Image src={figSparseDitto} alt="SparseDitto 的结构分析、计划综合和执行反馈流程" format="webp" quality={90} loading="lazy" />
+  </a>
+  <figcaption style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.8' }}>
+    <strong>图 4.</strong> SparseDitto 原 Figure 4，取自 <a href="https://arxiv.org/pdf/2608.05033v3">arXiv 2608.05033v3</a>，PDF 第 6 页 <a href="#ref-27">[27]</a>。模板选择和架构感知计划综合为 CUDA 代码生成提供输入，运行反馈用于改进候选。<a href={figSparseDitto.src} target="_blank" rel="noopener">查看原图 ↗</a>
+  </figcaption>
+</figure>
+
+这一方案把稀疏结构与执行计划显式关联起来，使表示膨胀、工作单元和硬件资源能够共同参与决策。不过，计划中的静态工作集估计不能直接等同于实测缓存命中率，智能体参与代码生成后，仍需验证生成代码。它与完全由确定性后端执行结构化变换的系统，在编译可靠性边界上有区别。
+
+K-Search 分开处理高层优化意图和具体代码实例，通过搜索树与持续更新的内部模型维护候选方向 [30](#ref-30)。这有助于处理需要连续修改、途中可能暂时失败的优化路径；其注意力和其他算子评测提供了搜索方法证据，尚不能直接说明稀疏 SpMM 上的收益。
+
+《LLM-Guided Autoscheduling for Large-Scale Sparse Machine Learning》让模型提出紧凑的融合与数据流顺序，编译器提供合法候选和验证 [31](#ref-31)。该工作发表于 NeurIPS 2025 的 ML for Systems workshop，使用经 FPGA 校准的数据流模拟环境。它体现了限制决策接口的思路，评价条件与 GPU 实测不同。
+
+### 5.2 把硬件指标转成可检验的优化假设
+
+总延迟只能说明候选变快或变慢，难以指出原因。KernelPro 将微观分析工具作为决策辅助，根据访存或计算特征选用 profiling，并把指令、资源和执行时间信息转为可操作的优化指导 [32](#ref-32)。对 SpMM，这类指导可以落到具体问题：稠密数据是否反复加载，填充计算是否过多，任务数量是否足以覆盖 GPU，流水线是否被等待或资源占用限制。
+
+指标仍需结合实现解释。较高的内存吞吐可能来自有效数据复用不足，也可能来自必要的数据收集；较低的计算利用率可能来自工作量过小、负载不均衡或同步等待。一次 profiling 不能独立确定原因，后续修改和对照测量应验证相应假设。
+
+CuTeGen 在实现相对稳定后引入 Nsight Compute 等详细反馈 [29](#ref-29)，避免在大量基础错误上反复支付分析成本。这种安排适合其搜索流程；其他系统是否应延后分析，取决于测量成本与反馈能排除多少无效方向。
+
+### 5.3 预算管理与经验复用
+
+有限预算下，搜索需要在继续修改已有候选与探索新方向之间分配资源。KernelBand 将候选 kernel 与优化策略的组合作为决策对象，利用硬件特征和多臂老虎机方法分配探索机会 [33](#ref-33)。多臂老虎机是在反复试验中平衡已知收益与未知收益的一类方法，其理论边界依赖所采用的硬件和函数假设。
+
+AdaExplore 从失败任务中总结语法、接口和编译约束，并在局部编辑与重新构造之间保留搜索多样性 [34](#ref-34)。失败经验可以减少不合法候选，但合法性经验与性能经验应分开处理。前者常能跨任务复用；后者可能只对特定矩阵分布、精度和 GPU 有效。
+
+AccelOpt 在 Trainium 加速器上利用快慢代码对积累优化记忆，并结合候选规划与执行进行搜索 [35](#ref-35)。其消融显示，充分采样后，记忆对最好 kernel 的改善并不显著。这提示经验的作用还应从找到有效候选所需的成本和速度来评价，不能只看最终最小延迟。
+
+CUDA-L1 通过监督学习和对比强化学习更新模型参数，让快慢实现及时间奖励参与训练 [36](#ref-36)。它与在上下文中保存经验的智能体系统具有不同的成本和泛化问题。模型训练、当前任务上的优化，以及未见任务测试需要分别记录；单个任务上持续改进的结果，无法单独证明跨任务能力。
+
+这些工作表明，比较智能体系统时需要检查搜索对象、合法性检查、反馈解释和预算分配。智能体数量本身难以解释性能差异。
+
+| 代表工作 | 决策或学习对象 | 反馈与搜索机制 | 结论的适用边界 |
+| --- | --- | --- | --- |
+| SparseDitto [27](#ref-27) | 表示、执行与硬件参数的统一计划及 CUDA 实现 | 结构分析、计划综合、验证与 profiling | 生成代码仍需验证，静态估计不能替代实测 |
+| CudaForge、CuTeGen [28](#ref-28)、[29](#ref-29) | CUDA 源码或 CuTe 抽象下的实现 | 编译、正确性与性能反馈 | 源码修改的灵活性伴随更大的验证范围 |
+| K-Search [30](#ref-30) | 优化意图与具体代码实例 | 搜索树与持续更新的内部模型 | 通用算子实验不能直接外推到稀疏 SpMM |
+| LLM-Guided Autoscheduling [31](#ref-31) | 紧凑的融合与数据流顺序 | 编译器提供合法候选及验证 | FPGA 校准的数据流模拟环境 |
+| KernelPro [32](#ref-32) | 由微观分析支持的优化假设 | 按需使用 profiling 工具 | 指标解释仍需实现分析与对照测量 |
+| KernelBand、AdaExplore [33](#ref-33)、[34](#ref-34) | 候选、策略与搜索方向 | 预算分配、失败适应与多样性保持 | 合法性经验与性能经验的迁移条件不同 |
+| AccelOpt [35](#ref-35) | 优化记忆与候选规划 | 快慢代码对及迭代执行 | Trainium 平台，需同时评价搜索效率 |
+| CUDA-L1 [36](#ref-36) | 模型参数 | 监督学习与对比强化学习 | 训练、任务内优化与未见任务测试应分开 |
+
+## 6. 横向评价：让结果具有可比性
+
+### 6.1 数值正确性与参考实现
+
+生成代码首先需要在规定输入范围内完成同一计算。格式重排后的输出恢复、边界块、空行、长行、重复索引及跨任务归约，都会影响验证。应比较完整输出，并根据数据精度和累加方式设置误差阈值；只抽查少量位置可能漏掉布局或尾部处理错误。
+
+KernelBench 用同时满足正确性与加速条件的任务比例评价生成 kernel [37](#ref-37)。其 `fast_p` 指通过测试且加速比大于阈值 <Equation inline tex="p" /> 的任务比例，使可运行、正确和更快三种结果能够分别观察。固定的一组随机输入仍有覆盖范围，模型可能利用测试分布生成只在部分输入上成立的实现。
+
+KernelBench-Verified 通过隐藏的输入变换、精度校正和源码审计检查这类问题 [38](#ref-38)。TF32 允许 Tensor Core 以较短的有效尾数处理 FP32 输入，参考实现是否启用它会影响速度基线；合法的形状特化与依赖特定数值分布的捷径也应区分。该工作的单轮生成、单张 H200 和推理评测设置，限定了其结论，不能据此概括所有多轮智能体搜索或稀疏 SpMM。
+
+### 6.2 执行时间与预处理时间
+
+对已准备好输入的 kernel，可重复测量预热后的 GPU 执行时间，报告中位数及波动。一次 SpMM 所必需的数据收集、输出恢复、填充处理、原子累加和归约，以及所有计算启动，都应纳入执行范围。Nsight Compute 的分析运行可能包含 replay，用于解释性能的时间应与普通运行中用于排名的时间分开。
+
+格式转换、重排、搜索和编译决定了优化何时能够回本。可用下式描述一个结构被复用 <Equation inline tex="R" /> 次时的总成本：
+
+<Equation tex={String.raw`T_{\mathrm{total}}(R)=T_{\mathrm{pre}}+R\,T_{\mathrm{exec}}.`} />
+
+这里，<Equation inline tex={String.raw`T_{\mathrm{pre}}`} /> 汇总首次使用所需的搜索、构建、转换和初始化成本，各项应采用互不重复的计量范围；搜索过程中已包含的编译费用不能再次累加。<Equation inline tex={String.raw`T_{\mathrm{exec}}`} /> 包含每次调用必须完成的全部计算与恢复操作。若稀疏结构每次变化，相关转换或检测费用也必须按次计入。
+
+假设新方案额外付出预处理时间 <Equation inline tex={String.raw`\Delta T_{\mathrm{pre}}>0`} />，每次调用节省 <Equation inline tex={String.raw`\Delta T_{\mathrm{exec}}>0`} />，则总时间开始取得净收益的条件为：
+
+<Equation tex={String.raw`R>\frac{\Delta T_{\mathrm{pre}}}{\Delta T_{\mathrm{exec}}}.`} />
+
+只报告预热 kernel 的最小延迟，无法回答低复用或动态工作负载中的收益。实际评估还应说明预处理是在结构变化时重做，还是在多次计算之间复用。
+
+### 6.3 搜索效率与消融
+
+自动优化应同时记录结果质量和获得结果的成本：
+
+- **相同任务条件。** 固定矩阵、<Equation inline tex="N" />、精度、GPU 和允许的预处理，按矩阵结构分组报告结果，避免少量高收益样例掩盖失败或回退。
+- **相同搜索预算。** 报告硬件评测次数、GPU 时间、总耗时及模型调用与 token 成本；编译失败和数值失败同样消耗预算。
+- **随预算变化的最好正确结果。** 记录每个阶段保留的最快正确候选，以及不同合法候选数量。只展示最终赢家，难以判断改进来自更好的决策还是更多试验。
+- **对应决策环节的消融。** 分别固定格式、移除硬件反馈、禁用经验复用，或替换候选选择方式。比较时保持预算与后端能力一致，才能解释各环节的作用。
+
+跨论文的加速比还受到基线版本、数据精度、矩阵集合和计时范围影响。当前文献更适合按机制和条件比较，缺少统一实验时不宜组成全领域性能排行榜。
+
+## 7. 尚待解决的研究问题
+
+- **表示搜索与策略搜索怎样分配预算。** 格式变化会改变填充、元数据和任务结构，固定格式下的分块与流水线优化又决定它能达到的速度。比较格式时需要观察其充分优化后的最好正确结果，同时避免对明显代价过高的表示投入过多。可通过相同总预算下的分层搜索与联合搜索对照，检验预算分配是否有效。
+- **不同尺度的反馈怎样对应决策。** 格式层关心存储膨胀、数据复用和工作分布，策略层关心寄存器、共享内存和同步。一次修改同时改变多个因素时，性能原因难以判断。保留物理槽位数、有效任务数、必要数据流量和执行参数，并做受控修改，有助于区分结构收益与实现收益。
+- **可编译与数值正确怎样形成分层验证。** 格式 DSL、元数据、kernel 和启动配置之间需要一致的约定。结构检查可以排除不受支持的设计，运行检查捕获访问与同步问题，完整输出测试验证计算。模型参与决策后，明确区分各类失败有助于积累可复用经验，减少将实现错误误判为格式无效的情况。
+- **经验怎样跨矩阵复用。** 相似的全局稀疏度可能对应不同的局部结构，性能记忆需要带上行长度分布、列重合程度、<Equation inline tex="N" />、精度和硬件条件。静态矩阵还需要考虑复用次数，动态矩阵需要考虑在线组织成本。跨任务评测应检查经验是否降低搜索成本，以及在分布变化时能否及时放弃失效策略。
+
+## 8. 结论
+
+稀疏 GPU 自动优化需要同时处理表示、执行与搜索。表示决定数据组织、索引流量和填充规模；执行决定这些数据怎样分配给线程、怎样进入矩阵指令，以及输出怎样归约；搜索则决定在有限预算下探索哪些组合。编译抽象、规则化执行和智能体反馈分别提供了可组合的程序对象、利用硬件的实现方法与选择候选的机制，它们通过物理布局和编译计划相互约束。
+
+评价系统时，首先需要确认它能描述并生成哪些合法实现，再检查数值验证、执行范围和搜索成本是否完整。对于结构可复用的任务，预处理成本应与复用次数一起判断；对于动态稀疏，在线组织必须进入每次调用的计时。现有论文的实验条件差异较大，可靠的比较应保留矩阵分布、精度、平台和预算边界，再分析各项机制在何种条件下有效。
+
+相关方法的进一步展开可见 <a href={withBase('blog/sparsetir-paper-deep-dive/')}>SparseTIR 论文精读</a>、<a href={withBase('blog/dtc-spmm-paper-deep-dive/')}>DTC-SpMM 论文精读</a>与 <a href={withBase('blog/sparseditto-paper-deep-dive/')}>SparseDitto 论文精读</a>。
+
+## 参考文献
+
+下列 38 篇文献按正文主题排列。SRSparse、STile 和 LiteForm 的定位依据正式摘要，本文未采用其未取得全文中的实验数字或实现细节。正式论文、workshop 与预印本分别标注，版本修订不重复计篇。图 1 为领域总览图，图 2—4 引用论文原图，出处、版本和页码见图注；论文原图归原作者所有，图内内容保持原样。
+
+- <a id="ref-1"></a>**[1]** [The Tensor Algebra Compiler](https://dl.acm.org/doi/10.1145/3133901). PACMPL 1(OOPSLA), 2017.
+- <a id="ref-2"></a>**[2]** [Format Abstraction for Sparse Tensor Algebra Compilers](https://dl.acm.org/doi/10.1145/3276493). PACMPL 2(OOPSLA), 2018.
+- <a id="ref-3"></a>**[3]** [A Sparse Iteration Space Transformation Framework for Sparse Tensor Algebra](https://dl.acm.org/doi/10.1145/3428226). PACMPL (OOPSLA), 2020.
+- <a id="ref-4"></a>**[4]** [Automatic Generation of Efficient Sparse Tensor Format Conversion Routines](https://dl.acm.org/doi/10.1145/3385412.3385963). PLDI 2020.
+- <a id="ref-5"></a>**[5]** [UniSparse: An Intermediate Language for General Sparse Format Customization](https://dl.acm.org/doi/10.1145/3649816). PACMPL 8(OOPSLA1), 2024.
+- <a id="ref-6"></a>**[6]** [SparseTIR: Composable Abstractions for Sparse Compilation in Deep Learning](https://dl.acm.org/doi/10.1145/3582016.3582047). ASPLOS 2023.
+- <a id="ref-7"></a>**[7]** [Finch: Sparse and Structured Tensor Programming with Control Flow](https://dl.acm.org/doi/10.1145/3720473). PACMPL 9(OOPSLA1), 2025.
+- <a id="ref-8"></a>**[8]** [Sparse GPU Kernels for Deep Learning](https://arxiv.org/abs/2006.10901). SC 2020. 系统：Sputnik.
+- <a id="ref-9"></a>**[9]** [GE-SpMM: General-purpose Sparse Matrix-Matrix Multiplication on GPUs for Graph Neural Networks](https://arxiv.org/abs/2007.03179). SC 2020.
+- <a id="ref-10"></a>**[10]** [TC-GNN: Bridging Sparse GNN Computation and Dense Tensor Cores on GPUs](https://www.usenix.org/conference/atc23/presentation/wang-yuke). USENIX ATC 2023.
+- <a id="ref-11"></a>**[11]** [DTC-SpMM: Bridging the Gap in Accelerating General Sparse Matrix Multiplication with Tensor Cores](https://dl.acm.org/doi/10.1145/3620666.3651378). ASPLOS 2024.
+- <a id="ref-12"></a>**[12]** [FlashSparse: Minimizing Computation Redundancy for Fast Sparse Matrix Multiplications on Tensor Cores](https://arxiv.org/abs/2412.11007). PPoPP 2025.
+- <a id="ref-13"></a>**[13]** [Voltrix: Sparse Matrix-Matrix Multiplication on Tensor Cores with Asynchronous and Balanced Kernel Optimization](https://www.usenix.org/conference/atc25/presentation/xia). USENIX ATC 2025.
+- <a id="ref-14"></a>**[14]** [AsyncSparse: Accelerating Sparse Matrix-Matrix Multiplication on Asynchronous GPU Architectures](https://arxiv.org/abs/2604.17834). arXiv:2604.17834v1, 2026.
+- <a id="ref-15"></a>**[15]** [RSH-SpMM: A Row-Structured Hybrid Kernel for Sparse Matrix-Matrix Multiplication on GPUs](https://dl.acm.org/doi/10.1145/3832810.3832853). ICPP 2026.
+- <a id="ref-16"></a>**[16]** [PIT: Optimization of Dynamic Sparse Deep Learning Models via Permutation Invariant Transformation](https://dl.acm.org/doi/10.1145/3600006.3613139). SOSP 2023.
+- <a id="ref-17"></a>**[17]** [AlphaSparse: Generating High Performance SpMV Codes Directly from Sparse Matrices](https://www.computer.org/csdl/proceedings-article/sc/2022/544400a952/1L07sWTJRAI). SC 2022.
+- <a id="ref-18"></a>**[18]** [SRSparse: Generating Codes for High-Performance Sparse Matrix-Vector Semiring Computations](https://dl.acm.org/doi/10.1145/3722114). ACM Transactions on Architecture and Code Optimization 22(2), 2025.
+- <a id="ref-19"></a>**[19]** [STile: Searching Hybrid Sparse Formats for Sparse Deep Learning Operators Automatically](https://dl.acm.org/doi/10.1145/3639323). PACMMOD 2(1) / SIGMOD 2024.
+- <a id="ref-20"></a>**[20]** [LiteForm: Lightweight and Automatic Format Composition for Sparse Matrix-Matrix Multiplication on GPUs](https://dl.acm.org/doi/10.1145/3731545.3731574). HPDC 2025.
+- <a id="ref-21"></a>**[21]** [Autoscheduling for Sparse Tensor Algebra with an Asymptotic Cost Model](https://dl.acm.org/doi/10.1145/3519939.3523442). PLDI 2022.
+- <a id="ref-22"></a>**[22]** [Learning to Optimize Tensor Programs](https://arxiv.org/abs/1805.08166). NeurIPS 2018. 系统：AutoTVM.
+- <a id="ref-23"></a>**[23]** [Ansor: Generating High-Performance Tensor Programs for Deep Learning](https://www.usenix.org/conference/osdi20/presentation/zheng). OSDI 2020.
+- <a id="ref-24"></a>**[24]** [Galley: Modern Query Optimization for Sparse Tensor Programs](https://arxiv.org/abs/2408.14706). PACMMOD / SIGMOD 2025.
+- <a id="ref-25"></a>**[25]** [Fast Autoscheduling for Sparse ML Frameworks](https://ieeexplore.ieee.org/document/11394842). CGO 2026. 系统：Scorch.
+- <a id="ref-26"></a>**[26]** [Optimal Software Pipelining and Warp Specialization for Tensor Core GPUs](https://www.usenix.org/conference/osdi26/presentation/soi). OSDI 2026. 系统：Twill.
+- <a id="ref-27"></a>**[27]** [SparseDitto: An Agentic Sparse Compilation Framework through Architecture-Aware Synthesis on GPUs](https://arxiv.org/abs/2608.05033). arXiv:2608.05033v3, 2026.
+- <a id="ref-28"></a>**[28]** [CudaForge: An Agent Framework with Hardware Feedback for CUDA Kernel Optimization](https://arxiv.org/abs/2511.01884). arXiv:2511.01884v2, 2025.
+- <a id="ref-29"></a>**[29]** [CuTeGen: An LLM-Based Agentic Framework for Generation and Optimization of High-Performance GPU Kernels using CuTe](https://arxiv.org/abs/2604.01489). arXiv:2604.01489v2, 2026.
+- <a id="ref-30"></a>**[30]** [K-Search: LLM Kernel Generation via Co-Evolving Intrinsic World Model](https://arxiv.org/abs/2602.19128). arXiv:2602.19128v2, 2026.
+- <a id="ref-31"></a>**[31]** [LLM-Guided Autoscheduling for Large-Scale Sparse Machine Learning](https://mlforsystems.org/assets/papers/neurips2025/paper40.pdf). ML for Systems workshop at NeurIPS 2025. 系统：AutoSparse/FuseFlow.
+- <a id="ref-32"></a>**[32]** [Optimizing CUDA like a Human: Micro-Profiling Tools as Expert Surrogates for LLM-Based GPU Kernel Optimization](https://arxiv.org/abs/2606.26453). arXiv:2606.26453v2, 2026. 系统：KernelPro.
+- <a id="ref-33"></a>**[33]** [KernelBand: Steering LLM-based Kernel Optimization via Hardware-Aware Multi-Armed Bandits](https://arxiv.org/abs/2511.18868). arXiv:2511.18868v2, 2025，2026 年修订。
+- <a id="ref-34"></a>**[34]** [AdaExplore: Failure-Driven Adaptation and Diversity-Preserving Search for Efficient Kernel Generation](https://arxiv.org/abs/2604.16625). arXiv:2604.16625v2, 2026.
+- <a id="ref-35"></a>**[35]** [AccelOpt: A Self-Improving LLM Agentic System for AI Accelerator Kernel Optimization](https://arxiv.org/abs/2511.15915). arXiv:2511.15915v2, 2025，2026 年修订。
+- <a id="ref-36"></a>**[36]** [CUDA-L1: Improving CUDA Optimization via Contrastive Reinforcement Learning](https://openreview.net/forum?id=igZItUbY6n). ICLR 2026. 核对版本：arXiv:2507.14111v12.
+- <a id="ref-37"></a>**[37]** [KernelBench: Can LLMs Write Efficient GPU Kernels?](https://proceedings.mlr.press/v267/ouyang25a.html). ICML 2025, PMLR 267.
+- <a id="ref-38"></a>**[38]** [KernelBench-Verified: Do LLM-Generated Kernels Actually Beat PyTorch?](https://arxiv.org/abs/2607.16241). arXiv:2607.16241v1, 2026.
