@@ -1,0 +1,236 @@
+---
+title: '搜广推模型基础（六）：双塔召回，从表示学习到精确检索'
+description: '解释双塔的可分离计算、内积与余弦、全库 softmax 和批内负例，给出训练、反向传播、历史过滤与精确 Top-K 的完整小例子。'
+category: '搜广推模型'
+pubDate: '2026-11-16T08:06:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import SearchRecSeries from '../../components/SearchRecSeries.astro';
+import SearchRecDiagram from '../../components/SearchRecDiagram.astro';
+import { withBase } from '../../lib/blog';
+
+<SearchRecSeries current={6} />
+
+排序模型可以把用户和候选物品的特征一起输入网络，细致地计算两者是否匹配。当候选库很大时，为全部物品逐个运行复杂网络会产生很高成本。双塔召回把匹配拆成两侧编码和一次简单打分，使物品侧的大部分计算可以提前完成。
+
+这里的“用户塔”也可以接收搜索 Query、会话和上下文，因此更一般地称为请求塔。另一侧称为物品塔，也可以编码商品、视频、广告或文档。两侧网络可以有不同结构，只需输出能够进行匹配的表示。
+
+## 1. 双塔的约束：每一侧怎样独立计算
+
+设请求输入为 `x`、物品输入为 `a_i`，两侧输出 `D` 维向量：
+
+<Equation tex={String.raw`u=f_\theta(x)\in\mathbb R^D,\qquad
+v_i=g_\phi(a_i)\in\mathbb R^D,\qquad
+s(x,i)=u^\top v_i.`} />
+
+用户 ID、预测前的历史行为、地域、当前 Query，可以进入请求塔。物品 ID、类目、标题、图像等可以进入物品塔。对于固定模型和物品特征，`v_i` 不依赖当前请求，因此可以离线计算并存入索引。
+
+线上请求到达后，系统只运行一次请求塔，得到 `u`，再查找内积最大的物品。两侧也可以共享一部分词表、Embedding 或文本编码器参数；参数共享不会破坏独立计算，输入依赖关系才决定物品能否预计算。
+
+<SearchRecDiagram kind="towers" />
+
+一个需要注意的边界是“用户到商品的距离”。它同时依赖用户位置与商品位置，不能直接放进离线物品向量。候选相关的历史注意力同样依赖当前物品，通常要在候选产生后逐一计算。设计双塔特征时，应逐项检查依赖哪一侧输入。
+
+YouTube 2016 年的候选生成工作展示了从用户历史预测候选的两阶段推荐系统思路。[1] 后续两侧都能利用丰富特征的双塔模型，进一步扩展了物品编码方式。[2] 具体论文的网络和损失仍需分别对照。
+
+## 2. 从矩阵分解到包含内容的双塔
+
+最简单的两侧编码器只是用户和物品 ID 查表，此时 `s=u_userᵀv_item` 就是矩阵分解。加入历史 pooling、数值特征和 MLP 后，多个原始特征共同决定最终向量。
+
+请求塔的一种输入组织方式是：
+
+```text
+用户 ID → Embedding ─────────────┐
+历史物品 → Embedding → pooling ─┼→ 拼接 → MLP → D 维向量
+设备 / 时间 / Query 表示 ───────┘
+```
+
+物品塔可以把 ID 向量、类目向量和内容表示拼接后投影到同一个 `D` 维空间。不同输入不必原本具有相同维度；输出维度一致是为了完成内积。
+
+只靠物品 ID 时，新物品缺少训练更新，通常只能使用未知向量或随机初始化。内容特征可以为新物品提供可计算的表示，但是否有效仍取决于内容编码质量及训练覆盖。如果模型训练时长期依赖 ID 分支，突然移除 ID 也可能失效。可以通过 ID dropout 等训练设计促使模型利用内容，再在独立冷启动切片上验证。
+
+mean pooling 能得到定长历史表示，但会丢失顺序。序列编码器可以保留兴趣演化，前提是所有输入在预测时可得。训练目标物品、预测后的行为、未来统计量都不应提前进入请求塔。历史很短或为空时，需要定义合理的回退输入。
+
+## 3. 内积、余弦与欧氏距离怎样对应
+
+内积可分解为向量模长与夹角：
+
+<Equation tex={String.raw`u^\top v=\|u\|_2\|v\|_2\cos\theta.`} />
+
+若不归一化，物品模长会影响排序。模型可能用模长编码与频率、置信程度等有关的信息，也可能因训练目标而出现模长持续增长。仅凭模长较大，无法确定它表示哪种业务语义。
+
+对两侧做 L2 归一化，内积就等于余弦相似度。归一化通常使用带 `eps` 的实现避免除零，但零向量仍然没有定义良好的余弦方向，应明确回退策略。
+
+对单位向量，有：
+
+<Equation tex={String.raw`\|u-v\|_2^2=\|u\|_2^2+\|v\|_2^2-2u^\top v
+=2-2u^\top v.`} />
+
+因此归一化后，最大内积与最小平方 L2 距离给出相同排序。未归一化时，物品的 `‖v‖²` 项不再是常数，两种检索结果可能不同。训练用余弦、上线直接用未经归一化的内积，会改变模型实际执行的打分规则。
+
+若分数包含物品偏置 `b_i`，可以通过扩展向量 `[u,1]` 与 `[v_i,b_i]` 实现内积检索。扩展后再做归一化会改变原公式，因此这类转换必须与索引距离一起验证。
+
+## 4. 全库 softmax 在学习什么
+
+给定请求 `x` 和一个正物品 `i⁺`，全库 softmax 目标为：
+
+<Equation tex={String.raw`P_\theta(i\mid x)=
+\frac{\exp(s(x,i)/\tau)}
+{\sum_{j\in\mathcal I}\exp(s(x,j)/\tau)},\qquad
+\ell=-\log P_\theta(i^+\mid x).`} />
+
+`τ>0` 是温度，`𝓘` 是训练目标所定义的物品集合。温度越小，相同分数差对应的 softmax 分布越尖锐。用 log-sum-exp 实现损失可以避免直接指数运算溢出。
+
+这表示在给定请求下，从该物品集合中识别目标物品的条件分布。它依赖样本构造、正例定义和分母集合，不能直接解释为某物品曝光后的点击率。多个物品都可能满足需求时，单正例目标也只是对观察数据的一种建模约定。
+
+对已经得到的请求向量求导，在 `s=uᵀv` 时：
+
+<Equation tex={String.raw`\frac{\partial\ell}{\partial u}
+=\frac1\tau\left(\sum_jP_\theta(j\mid x)v_j-v_{i^+}\right).`} />
+
+梯度下降会增加请求与目标物品的匹配，并降低高概率竞争物品的相对优势。若请求向量由归一化或网络产生，梯度还需通过这些操作继续传播，不能把上述表达式直接当成原始网络参数的梯度。
+
+温度同时影响分布和梯度尺度，与 batch 大小、负例难度、向量范数及学习率有关。对于固定请求，统一的正常数温度不会改变单纯相似度 Top-K；如果另加物品偏置或其他分数项，需要检查它们是否按相同尺度组合。
+
+## 5. In-batch negatives：一次矩阵乘得到 B² 个分数
+
+全库分母在大规模训练中很昂贵。一种常见近似是：一个 batch 包含 `B` 对请求与正物品，分别编码成 `U,V∈R^{B×D}`，再计算：
+
+<Equation tex={String.raw`S=UV^\top/\tau\in\mathbb R^{B\times B},\qquad
+\ell_{\mathrm{batch}}=-\frac1B\sum_{b=1}^{B}
+\log\frac{\exp(S_{bb})}{\sum_{j=1}^{B}\exp(S_{bj})}.`} />
+
+第 `b` 行表示请求 `b` 对 batch 内所有物品的分数，对角线是已知配对。物品只编码一次，其他请求就能复用它作为候选，从而提高计算利用率。代价是分数矩阵占用 `O(B²)` 存储，负例分布也由 batch 构造决定。
+
+这个简单公式依赖几个条件：每行的正确目标列已经对齐；重复物品不会被错误地标成竞争负例；同一请求的其他已知正物品需要合理处理。batch 只含一个配对时，分母与分子相同，损失为零，无法提供物品间的区分信号。
+
+批内候选来自训练正例分布，热门物品往往出现得更多。直接使用此目标与优化全库 softmax 一般不等价。这里先展示最小训练流程，下一篇再推导负样本分布与采样修正。
+
+## 6. 一段贯通训练与精确召回的代码
+
+代码使用 PyTorch 2.2.2 的 CPU 环境核对。`0` 为 PAD，真实物品 ID 为 `1…10`。历史查表与物品塔共享 ID Embedding；请求塔将用户向量和历史均值拼接，物品塔组合 ID 与类目。
+
+```python
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+class TwoTower(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.user_id = nn.Embedding(5, 12, padding_idx=0)
+        self.item_id = nn.Embedding(11, 12, padding_idx=0)
+        self.category = nn.Embedding(4, 4, padding_idx=0)
+        self.register_buffer("item_category",
+                             torch.tensor([0, 1, 1, 2, 2, 3, 3, 1, 2, 3, 1]))
+        self.user_net = nn.Sequential(nn.Linear(24, 24), nn.ReLU(),
+                                      nn.Linear(24, 16))
+        self.item_net = nn.Sequential(nn.Linear(16, 24), nn.ReLU(),
+                                      nn.Linear(24, 16))
+
+    def encode_user(self, users, history):
+        mask = history.ne(0)
+        h = (self.item_id(history) * mask.unsqueeze(-1)).sum(1)
+        h = h / mask.sum(1, keepdim=True).clamp_min(1)
+        x = torch.cat([self.user_id(users), h], dim=-1)
+        return F.normalize(self.user_net(x), dim=-1)
+
+    def encode_item(self, items):
+        x = torch.cat([self.item_id(items),
+                       self.category(self.item_category[items])], dim=-1)
+        return F.normalize(self.item_net(x), dim=-1)
+
+torch.manual_seed(11)
+model = TwoTower()
+users = torch.tensor([1, 2, 3, 4])
+history = torch.tensor([[1, 3, 0], [2, 0, 0], [0, 0, 0], [5, 7, 0]])
+positives = torch.tensor([2, 4, 6, 8])
+assert positives.unique().numel() == len(positives)
+assert not (history == positives[:, None]).any()  # 本例构造规则
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+u = model.encode_user(users, history)             # [4, 16]
+v = model.encode_item(positives)                  # [4, 16]
+tau = 0.1
+logits = u @ v.T / tau                            # [4, 4]
+loss = F.cross_entropy(logits, torch.arange(len(users)))
+optimizer.zero_grad()
+loss.backward()
+assert model.user_net[0].weight.grad.abs().sum() > 0
+assert model.item_net[0].weight.grad.abs().sum() > 0
+assert all(p.grad is None or torch.isfinite(p.grad).all()
+           for p in model.parameters())
+optimizer.step()
+
+# 更新后重新生成物品向量，避免混用更新前的表示。
+model.eval()
+with torch.inference_mode():
+    catalog = torch.arange(1, 11)
+    database = model.encode_item(catalog)         # 可离线保存
+    queries = model.encode_user(users, history)
+    scores = queries @ database.T                # [4, 10]
+    seen = ((history[:, :, None] == catalog[None, None, :]) &
+            history[:, :, None].ne(0)).any(dim=1)
+    eligible = ~seen                             # 教学规则：过滤历史物品
+    eligible[:, -1] = False                      # 模拟物品 10 当前不可用
+    k = 3
+    assert eligible.sum(1).min() >= k
+    filtered = scores.masked_fill(~eligible, -torch.inf)
+    top_scores, positions = filtered.topk(k, dim=1)
+    retrieved_ids = catalog[positions]
+    assert retrieved_ids.shape == (4, 3)
+    assert eligible.gather(1, positions).all()
+    assert torch.isfinite(top_scores).all()
+    torch.testing.assert_close(
+        database[0], model.encode_item(torch.tensor([1]))[0],
+        atol=1e-6, rtol=1e-6)
+```
+
+这段代码只执行一次参数更新，用于检查形状、反向传播和过滤规则。它没有训练出经过质量验证的推荐模型，也没有提供真实效果数值。完整实验还需要读取数据、循环训练、独立验证、保存最优权重并在测试集评估。
+
+“过滤历史物品”也只是本例的规则。视频推荐可能允许重看，商品可能需要复购，新闻通常更强调新内容；训练与评价应采用相同的任务定义。不能因为代码方便就过滤全部历史交互。
+
+## 7. 怎样组织训练和验证
+
+先按预测时间构造请求、历史与目标，随后建立时间切分。对一个用户的多个训练样本，历史窗口应随预测时间移动。训练数据中的目标交互可以成为后续时刻的历史，前提是它在后续预测时已经可见。
+
+验证时，把固定版本的全库物品向量生成一次，再对每个请求做精确检索。数据太大时，可以按物品分块计算矩阵乘和局部 Top-K，再合并结果；数学目标不变，无需保存完整 `[B,N]` 分数矩阵。
+
+至少保留以下对照：
+
+- 热门物品或简单共现基线，用于判断复杂编码是否带来收益。
+- 仅 ID 与加入内容的模型，观察新物品和长尾物品的变化。
+- 不同历史长度或 pooling 方法，观察短历史、长历史与空历史。
+- 固定候选集合上的 Recall@K、NDCG，以及物品覆盖和热门程度分布。
+
+模型选择在验证集完成，测试集用于最终报告。batch 内命中率受负例组成影响，不足以替代全库检索评价。训练损失下降也可能只是模型更擅长区分当前采样候选。
+
+## 8. 单向量能够表达多少兴趣
+
+一个请求向量需要同时表示多个兴趣。例如用户既喜欢摄影又喜欢登山，相关物品可能分布在向量空间中的不同区域。把所有历史压成一个向量，会限制这些兴趣的独立表达。
+
+可以输出多个请求向量，分别召回后合并；也可以使用多向量物品与 late interaction，在打分时组合多组局部相似度。这些方法通常增加索引规模或检索次数，评分函数也可能超出普通单向量内积索引的能力。
+
+Cross-Encoder 将 Query 与候选内容一起编码，候选相关注意力则让历史表示随候选变化。它们具有更丰富的交互，但通常需要对已有候选执行。常见系统先用双塔控制候选规模，再用更强交互的排序模型细化判断。
+
+双塔还可能受到历史曝光策略影响：正例来自系统曾展示并获得交互的物品。内容编码、负采样和更大模型都不能单独保证消除这种选择偏差，需要结合样本定义与实验评价。
+
+## 9. 上线需要同时发布哪些内容
+
+一套可用的召回版本至少包括请求塔权重、物品塔权重、特征与词表版本、物品向量、物品 ID 映射、归一化规则及索引参数。模型和索引最好作为一个可切换的版本集合发布。
+
+即使两次训练使用相同架构，向量空间也可能发生旋转或其他变化。旧请求向量与新物品向量的内积没有自动保持语义的保证。共享 ID 表更新后，已有物品向量也可能过期；增量更新需要明确哪些物品受到影响。
+
+内容变化、上架下架、权限和库存属于不同更新频率的状态。可预计算的稳定特征放进物品表示，快速变化的可用性通过过滤处理。过滤后候选不足时，需要扩大检索深度、增加补召回或返回较少结果，并记录策略。
+
+线上延迟由请求特征获取、请求塔、索引查询、过滤与合并共同组成。批处理会改变吞吐和等待时间，平均查询耗时不能代表尾延迟。模型指标、索引误差和服务成本应分别记录。
+
+本篇已经得到可进行精确检索的向量。接下来需要明确训练时“与谁竞争”，再决定如何逼近全库目标；这对应<a href={withBase('blog/search-ads-rec-07-negative-sampling/')}>负样本与采样修正</a>。
+
+## 参考资料
+
+1. Covington et al. [Deep Neural Networks for YouTube Recommendations](https://dl.acm.org/doi/10.1145/2959100.2959190), RecSys 2016。候选生成与排序的两阶段架构。
+2. Yi et al. [Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations](https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/), RecSys 2019。双塔、批内采样偏差与物品特征。
+3. PyTorch. [CrossEntropyLoss](https://docs.pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html)、[normalize](https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.normalize.html)。logits、类别索引与归一化接口。
+4. Zhou et al. [Deep Interest Network for Click-Through Rate Prediction](https://arxiv.org/abs/1706.06978), 2017。候选相关的历史聚合。

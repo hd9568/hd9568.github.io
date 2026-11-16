@@ -1,0 +1,264 @@
+---
+title: '搜广推模型基础（七）：负样本、批内对比与采样修正'
+description: '区分曝光负例与对比候选，推导负采样分布、密度比、logQ 和重要性估计，处理重复物品与多正例，并说明 NCE、BPR 和 CTR 降采样的边界。'
+category: '搜广推模型'
+pubDate: '2026-11-16T08:07:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import SearchRecSeries from '../../components/SearchRecSeries.astro';
+import SearchRecDiagram from '../../components/SearchRecDiagram.astro';
+import { withBase } from '../../lib/blog';
+
+<SearchRecSeries current={7} />
+
+双塔训练需要让已观察到的正物品获得较高分数。只提高正例分数还不够：如果所有物品的分数一起升高，检索顺序没有改善。负样本为模型提供比较对象，同时决定哪些区别会被反复学习。
+
+“负样本”在不同任务中的含义并不相同。本篇先定义数据与目标，再讨论采样及修正。记请求为 `x`、正物品为 `i⁺`、原始相似度为 `s(x,i)`，温度后的 logit 为 `z_i=s(x,i)/τ`。
+
+## 1. 先区分三类负例
+
+| 数据情况 | 能支持的判断 | 不能直接推出的判断 |
+| --- | --- | --- |
+| 已曝光且观察窗内未点击 | 在指定曝光、位置和窗口下没有观察到点击 | 用户永远不喜欢该物品 |
+| 从未交互物品中抽取 | 可以作为某个召回训练目标的竞争候选 | 已展示但用户拒绝 |
+| 已点击但转化窗口未结束 | 转化标签尚未成熟 | 最终不会转化 |
+
+在点击率模型里，标签 0 应对应明确的曝光事件与观察口径。在召回对比训练里，负候选可能根本没被曝光，它的作用是与目标物品竞争。这种选择可以形成有用的训练目标，但输出概率不能直接按曝光 CTR 解释。
+
+搜索还有未标注文档：未出现在相关性标注中，可能只是没有经过判断。将所有未标注结果都视为真实不相关，会给训练和评测带来额外假设。已知正例也可能具有不同强度，例如点击、收藏和购买，需要先定义目标行为。
+
+## 2. 全库目标为什么需要负样本
+
+全库 softmax 的单样本损失为：
+
+<Equation tex={String.raw`\ell_{\mathrm{full}}=-z_{i^+}+\log Z,\qquad
+Z=\sum_{j\in\mathcal I}\exp(z_j).`} />
+
+其中每个物品都参与归一化。对某个 logit 求导：
+
+<Equation tex={String.raw`\frac{\partial\ell_{\mathrm{full}}}{\partial z_j}
+=P_\theta(j\mid x)-\mathbf1(j=i^+).`} />
+
+分数较高的非目标物品获得较大梯度，因此当前容易混淆的候选通常更影响学习。精确计算却需要访问全库分数，大库训练常用采样减少成本。
+
+需要先选定目标：希望近似全库 softmax，还是刻意强化与某类候选的区分。前者需要关心估计器和采样概率；后者可以使用专门的对比目标，但结果应按该目标解释。不同负例策略即使得到类似损失数值，也可能学习出不同排序。
+
+## 3. 常见采样方式改变了哪些信息
+
+| 方式 | 候选来源 | 收益与限制 |
+| --- | --- | --- |
+| 均匀采样 | 从可用库近似等概率抽取 | 覆盖广，大量候选可能很容易区分 |
+| 流行度采样 | 概率与交互频率有关 | 增加常见候选，但改变竞争分布 |
+| 批内负例 | 其他样本的正物品 | 复用编码，依赖数据加载与组 batch 规则 |
+| 难负例 | 当前或历史模型的高分非目标物品 | 聚焦混淆，可能混入未标注正例 |
+| 混合采样 | 多种策略组合 | 兼顾覆盖和难度，需要清楚混合概率 |
+| 跨 batch 队列 | 先前 batch 的物品表示 | 扩大候选池，存在表示过期问题 |
+
+常见流行度分布为 `Q(i)∝f_i^α`。`α=0` 接近均匀，`α=1` 与频率成正比；具体指数通过实验决定。频率应从允许使用的训练历史估计，不能使用未来数据。
+
+随机打乱交互样本时，批内物品通常接近交互频率分布。若按用户、时间、地域或长度组 batch，分布会发生变化，其他列与当前请求也可能相关。此时只用全局物品频率表示 `Q(i|x)` 可能不准确。
+
+难负例可以来自精确检索、ANN、规则或教师模型。高分并不证明不相关：两个相似商品可能都满足需求。应结合已知正例过滤、相关性标注或适当权重使用难负例，并防止采样器只反复访问少量热门候选。
+
+## 4. 对比目标为什么会学到密度比
+
+考虑一个明确的采样实验：给定请求 `x`，一个候选由正例分布 `P₊(i|x)` 产生，另外 `M` 个候选独立来自噪声分布 `Q(i|x)`，再打乱候选位置，要求模型识别哪个位置来自正例分布。
+
+在 `Q` 覆盖正例支持集、候选按上述方式生成的条件下，给定整个候选列表，第 `k` 个位置为正例的后验概率满足：
+
+<Equation tex={String.raw`P(k\text{ 为正例}\mid x,i_0,\ldots,i_M)
+=\frac{P_+(i_k\mid x)/Q(i_k\mid x)}
+{\sum_{r=0}^{M}P_+(i_r\mid x)/Q(i_r\mid x)}.`} />
+
+因此，模型容量和优化充分时，直接用于这个 softmax 分类的最优 logit 具有以下形式：
+
+<Equation tex={String.raw`z^*(x,i)=\log P_+(i\mid x)-\log Q(i\mid x)+c(x).`} />
+
+`c(x)` 对同一请求的所有物品相同，不影响候选 softmax。可以看到，直接对比训练的分数与正例分布、噪声分布都有关。一个频繁成为负候选的物品，需要更强的正例证据才能得到相同得分。
+
+若希望把模型参数化为正例对数概率的分数，一种常见做法是在训练分类 logit 中使用：
+
+<Equation tex={String.raw`\widetilde z(x,i)=s_\theta(x,i)/\tau-\log Q(i\mid x).`} />
+
+在上述理想采样实验下，`s/τ` 可以对应 `log P₊+c(x)`。这是理解 logQ 修正的一条路径。[1] 它依赖候选的生成方式，不能自动推广到任意去重、难负例、确定性插入正例或跨 batch 队列。
+
+公式的顺序也有含义：先对相似度除以温度，再减 `logQ`。写成 `(s−logQ)/τ` 会把采样修正也缩放，变成不同目标。
+
+## 5. 一个采样假设完整的分母估计
+
+再考虑另一种明确设计：当前观察到的正例固定保留，只从其余物品中有放回地抽取 `M` 个负候选。记这个排除正例后重新归一化的分布为 `Q₋(j|x,i⁺)`，要求每个其余物品都有正采样概率。
+
+可以构造：
+
+<Equation tex={String.raw`\widehat Z=\exp(z_{i^+})
++\frac1M\sum_{m=1}^{M}
+\frac{\exp(z_{j_m})}{Q_-(j_m\mid x,i^+)},
+\qquad j_m\overset{\mathrm{iid}}{\sim}Q_-.`} />
+
+因为 `E_Q[exp(z_j)/Q(j)]=Σ_j exp(z_j)`，所以 `E[Ẑ]=Z`。负候选被少量抽到时会获得较大的重要性权重，补偿其在随机样本中的出现频率。
+
+用稳定的 log-sum-exp 实现时，保留正例 logit `z_i⁺`，每个负候选贡献的修正 logit 为：
+
+<Equation tex={String.raw`\widetilde z_{j_m}=z_{j_m}-\log Q_-(j_m\mid x,i^+)-\log M.`} />
+
+这里正例项没有除以 `Q₋`，因为它被确定性保留，而且不在负例分布的支持集中。直接把正负所有列统一减同一个含义不明的 logQ，会改变估计器。近期关于 logQ 的研究也专门讨论了正例固定纳入候选时的修正差异。[2]
+
+**分母无偏不等于损失或梯度无偏。** 对数是非线性函数，一般有 `E[log Ẑ]≠log Z`；对有限负例数得到的损失求梯度，也一般不等于全库梯度。对固定有限物品库、正概率提议分布等适当条件，增大样本数可以使估计趋近全库目标。
+
+另外，如果某些物品概率极小、模型分数却很高，重要性权重会产生较大方差。裁剪权重能限制方差，但又引入偏差。修正的存在不意味着负例数量、分布和数值范围可以忽略。
+
+### 核对分母、损失与梯度
+
+下面只用四个物品，完整枚举一次负采样的所有可能结果，检查分母的期望。随后比较有限采样的平均梯度与全库梯度，直接观察两者的差异。
+
+```python
+import math
+import torch
+
+def sampled_softmax_loss(logits, positive, negative_ids, negative_q):
+    # logits 已包含温度；negative_q 是排除正例后的单次抽样概率。
+    if negative_ids.numel() == 0 or (negative_ids == positive).any():
+        raise ValueError("nonempty negatives excluding the positive required")
+    if not torch.all((negative_q > 0) & (negative_q <= 1)):
+        raise ValueError("valid proposal probabilities required")
+    corrected = logits[negative_ids] - negative_q.log() - \
+                math.log(negative_ids.numel())
+    terms = torch.cat([logits[positive:positive + 1], corrected])
+    return torch.logsumexp(terms, dim=0) - logits[positive]
+
+logits = torch.tensor([0.2, 1.1, -0.4, 0.7],
+                      dtype=torch.float64, requires_grad=True)
+positive = 1
+pool = torch.tensor([0, 2, 3])
+q = torch.tensor([0.2, 0.3, 0.5], dtype=torch.float64)
+assert q.sum().item() == 1.0
+
+# M=1 时，枚举所有抽样结果，计算分母的精确期望。
+estimated_z = logits[positive].exp() + logits[pool].exp() / q
+expected_z = (q * estimated_z).sum()
+full_z = logits.exp().sum()
+torch.testing.assert_close(expected_z, full_z, atol=1e-12, rtol=1e-12)
+
+expected_sampled_loss = sum(
+    q[t] * sampled_softmax_loss(logits, positive, pool[t:t+1], q[t:t+1])
+    for t in range(len(pool))
+)
+full_loss = torch.logsumexp(logits, dim=0) - logits[positive]
+sampled_grad = torch.autograd.grad(expected_sampled_loss, logits)[0]
+full_grad = torch.autograd.grad(full_loss, logits)[0]
+assert not torch.allclose(sampled_grad, full_grad, atol=1e-5, rtol=1e-5)
+
+# 有放回采样允许重复 ID；不要在事后去重再沿用原估计式。
+generator = torch.Generator().manual_seed(9)
+draw = torch.multinomial(q, 32, replacement=True, generator=generator)
+loss = sampled_softmax_loss(logits, positive, pool[draw], q[draw])
+assert torch.isfinite(loss)
+```
+
+这个例子刻意采用已知且固定的提议概率。采样器依赖当前模型时，需要明确其更新方式、概率是否可计算，以及梯度是否经过采样器；不能只把抽出来的 ID 送入公式就默认推导仍然成立。
+
+## 6. Q、出现次数与入选概率不能混用
+
+有放回独立抽样 `M` 次时，某物品的期望出现次数为 `M Q(i)`。若保留全部抽样次数，上节公式就按每次出现累加。
+
+若抽样后只保留不同 ID，则该物品至少出现一次的概率为：
+
+<Equation tex={String.raw`\pi_i=1-(1-Q(i))^M.`} />
+
+对去重后的入选集合，估计总和需要考虑入选概率等相应方法，不能继续把每个唯一物品当作一次普通抽样来使用 `1/(M Q(i))`。无放回采样也有自己的入选概率。库函数中的 `expected_count`、`sampling_probability` 与 `inclusion_probability` 可能指不同对象。
+
+混合采样若按概率 `α` 选择均匀策略、按 `1−α` 选择流行度策略，则单次候选概率是两者的加权和。若先固定每种策略各抽多少个，再拼接候选，则需要按这种分层抽样设计推导权重。硬截断的 Top-K 难负例会使库外候选入选概率为零，无法单独无偏恢复全库总和。
+
+因此，保存采样方法时，应同时保存候选池、过滤规则、替换方式、抽样次数、去重步骤和概率定义。这些共同决定损失的含义。
+
+## 7. 重复物品与多正例怎样处理
+
+一个 batch 中，两个不同用户可能点击同一个物品 A。若只把对角线设为正例，A 的另一个副本就会出现在该请求的分母里，与内容完全相同的目标竞争。
+
+<SearchRecDiagram kind="negatives" />
+
+对完全相同物品的副本，可以只保留一个有效目标，也可以将它们一起纳入正例集合。对不同物品但同样相关的情况，需要更多标注或任务知识，仅靠 ID 去重无法发现。
+
+下面同时给出两种目标。第一种屏蔽其他同 ID 列，保留对角线。第二种使用多正例的概率质量和：
+
+<Equation tex={String.raw`\ell_{\mathrm{multi}}
+=-\log\frac{\sum_{j\in P(x)}\exp(z_j)}
+{\sum_{j\in C(x)}\exp(z_j)}.`} />
+
+这个目标鼓励正例集合整体得到高概率，可能更偏向已经容易识别的正例。如果要求每个正例分别得到较高概率，可以平均各正例的负对数概率，或明确正例软标签分布；它们的梯度不同。
+
+```python
+import torch
+from torch.nn import functional as F
+
+torch.manual_seed(4)
+item_ids = torch.tensor([10, 20, 10, 30])
+logits = torch.randn(4, 4, dtype=torch.float64, requires_grad=True)
+same_item = item_ids[:, None].eq(item_ids[None, :])
+diagonal = torch.eye(4, dtype=torch.bool)
+masked = logits.masked_fill(same_item & ~diagonal, -torch.inf)
+single_loss = F.cross_entropy(masked, torch.arange(4))
+
+positive_scores = logits.masked_fill(~same_item, -torch.inf)
+multi_loss = (torch.logsumexp(logits, dim=1) -
+              torch.logsumexp(positive_scores, dim=1)).mean()
+assert torch.isfinite(single_loss) and torch.isfinite(multi_loss)
+gradient = torch.autograd.grad(single_loss + multi_loss, logits)[0]
+assert torch.isfinite(gradient).all()
+```
+
+这段代码将同 ID 列视为相同正物品。生产数据中还可能包含同一实体的不同版本、重复内容和别名，需要使用符合业务语义的实体 ID。多正例集合也必须使用预测或训练规则允许的标注，不能把未来测试答案提前用于训练筛选。
+
+## 8. 分布式负例与队列带来的额外条件
+
+多设备训练常把各设备的物品向量拼起来，让每个请求看到更多候选。若各设备局部 batch 都为 `B`，设备 `r` 上第 `b` 个请求的正例列通常是 `rB+b`；局部 batch 不等长时，应使用实际前缀偏移。
+
+还需要检查 all-gather 的反向传播。把远端物品向量当常量会改变物品塔收到的梯度；支持 autograd 的收集方式则要结合梯度汇总和 loss reduction 确认尺度。扩大候选数后，温度、学习率和采样分布也可能需要重新评估。
+
+重复物品检查应覆盖全局候选矩阵。某物品在本设备唯一，却可能在其他设备出现多次。按设备、用户或地区切分数据，还会形成与简单独立采样不同的负例相关性。
+
+跨 batch 队列保存历史表示，能够减少重新编码的成本，但这些向量由旧参数产生。队列长度、刷新速度和参数变化决定过期程度。混合使用新旧向量也可能影响物品范数和分数分布，评价时应固定一套当前模型表示。
+
+## 9. BPR、二分类负采样与 NCE
+
+**BPR**使用请求、正物品、负物品三元组，鼓励正物品得分更高：[3]
+
+<Equation tex={String.raw`\ell_{\mathrm{BPR}}=-\log\sigma(s(x,i^+)-s(x,j^-)).`} />
+
+当正例已经明显高于负例时，损失较小。它直接优化成对顺序，结果依赖三元组采样，分数没有自动的 CTR 概率含义。使用一个负例的二候选 softmax，在相同 logit 定义下与这一形式对应。
+
+**负采样二分类**给观察正例标签 1、噪声候选标签 0，分别计算 BCE。在一个正例配 `M` 个噪声、两类按对应样本数汇总的理想设置下，判别 logit 同样包含 `log P₊−log(MQ)` 这样的密度比。正负损失若分别取均值后再相加，相对类权重又发生了变化。
+
+**NCE（Noise-Contrastive Estimation）**也通过区分数据与噪声估计模型，但它明确把模型密度、噪声概率和采样比例放入分类概率，用于估计包括未归一化模型在内的统计模型。[4] 任意带随机负例的 BCE 不能仅凭外形相近就称为等价的 NCE 实现。
+
+比较这些方法时，应先对齐数据单位、负例来源、每请求权重与目标分数，再讨论算法名称。
+
+## 10. CTR 降采样是另一种概率修正
+
+假设原始曝光数据的点击概率为 `p(x)`，正例以概率 `r₁` 保留，负例以概率 `r₀` 保留，且类内保留概率不再依赖其他未建模因素。采样数据中的概率 `p_s` 满足：
+
+<Equation tex={String.raw`\frac{p_s(x)}{1-p_s(x)}
+=\frac{r_1}{r_0}\frac{p(x)}{1-p(x)},\qquad
+\operatorname{logit}p(x)=\operatorname{logit}p_s(x)+\log\frac{r_0}{r_1}.`} />
+
+例如正例全部保留、负例保留十分之一，原始 logit 等于采样模型 logit 减去 `log 10`。也可以通过逆采样权重调整训练目标。若训练已经正确恢复目标分布，输出端再做同样修正会重复调整。
+
+这个公式来自曝光二分类中的样本选择。它与召回 softmax 中近似分母或密度比的 logQ 具有不同前提，也无法恢复从未获得曝光支持的物品反馈。采样率随输入变化时，需要知道相应的条件保留概率，简单全局常数未必足够。
+
+同理，召回模型上线是否使用 `−logQ`，取决于训练时希望原始分数表示什么。若训练已用修正 logit 学习正例分布分数，检索时通常使用原始相似度；若本来就希望检索某种密度比，应按该目标执行。修正不能在训练和服务两端无条件重复添加。
+
+## 11. 怎样比较负样本策略
+
+固定数据切分、编码器、训练预算和全库评测集合，分别比较均匀、批内、难负例和混合策略。报告负例数、重复率、已知正例误入比例、难度分布及采样器版本，再看 Recall@K、NDCG、头部与长尾切片。
+
+采样目标不同，训练损失的数值不一定可比。更难的负例可能使 loss 增大，同时改善最终检索；过多假负例也可能提高训练难度却损害质量。应保留固定候选的验证结果，并检查高分错误和漏召回样本。
+
+负例构造决定模型学到怎样的向量空间，索引决定能否从该空间中找到高分物品。下一篇将用精确结果作为参照，分析<a href={withBase('blog/search-ads-rec-08-vector-search-ann/')}>IVF、HNSW 与 PQ</a>的近似来源。
+
+## 参考资料
+
+1. Yi et al. [Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations](https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/), RecSys 2019。批内负采样及频率修正。
+2. [Correcting the LogQ Correction: Revisiting Sampled Softmax for Large-Scale Retrieval](https://arxiv.org/abs/2507.09331), 2025。固定纳入正例时的修正差异；本文第 5 节采用显式定义的独立重要性估计器。
+3. Rendle et al. [BPR: Bayesian Personalized Ranking from Implicit Feedback](https://arxiv.org/abs/1205.2618), UAI 2009，arXiv 收录于 2012。隐式反馈上的成对排序目标。
+4. Gutmann and Hyvärinen. [Noise-contrastive estimation: A new estimation principle for unnormalized statistical models](https://proceedings.mlr.press/v9/gutmann10a.html), AISTATS 2010。数据与噪声判别的统计估计原理。

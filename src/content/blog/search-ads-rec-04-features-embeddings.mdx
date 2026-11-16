@@ -1,0 +1,226 @@
+---
+title: '搜广推模型基础（四）：特征与 Embedding，从 ID 到变长行为'
+description: '解释字段编码、OOV 与哈希、数值归一化、Embedding 查表、变长 pooling、padding、稀疏梯度及内存成本，结合 PyTorch 检查形状与反向传播。'
+category: '搜广推模型'
+pubDate: '2026-11-16T08:04:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import SearchRecSeries from '../../components/SearchRecSeries.astro';
+import SearchRecDiagram from '../../components/SearchRecDiagram.astro';
+import { withBase } from '../../lib/blog';
+
+<SearchRecSeries current={4} />
+
+模型接收的是张量，业务日志通常是一组含义不同的字段：用户 ID、物品类目、价格、设备、历史点击列表等。特征处理要同时保留这些字段的语义、时间边界和缺失状态，再把它们转换为稳定的数值表示。
+
+本篇使用 `B` 表示 batch size，`F` 表示特征域数量，`D` 表示向量维度，`L` 表示补齐后的序列长度，`V` 表示词表大小。示例基于普通 PyTorch；代码在 PyTorch 2.2.2 的 CPU 环境检查，当前官方文档提供进一步接口说明。
+
+## 1. 特征域、类别取值与数值不要混淆
+
+**特征域 field**是一类具有共同语义的字段，例如地域、设备类型和物品类目。一个域内包含多个类别取值。地域编号为 3、类目编号为 3，通常应该对应不同参数；恰好相同的整数不代表相同含义。
+
+| 输入类型 | 原始例子 | 常见表示 | 主要需要保留的信息 |
+| --- | --- | --- | --- |
+| 单值类别 | 一个地域、一个设备 | 整数 ID → 向量 | 域与类别身份 |
+| 多值类别 | 三个兴趣标签 | 多个 ID → 聚合 | 成员与可选权重 |
+| 数值 | 价格、计数、时间间隔 | 标准化数值或分桶 | 大小关系、缺失状态 |
+| 行为序列 | 按时间发生的点击 | ID 向量 + 顺序/时间 | 先后关系与有效长度 |
+| 内容 | 标题、图片、文本描述 | 内容编码器的输出 | 内容本身及编码版本 |
+
+类别 ID 应通过查表使用。把地域编码 `1、2、3` 直接当连续数值输入，会让模型收到一个人工排序和距离关系。数值特征则恰好需要保留大小关系，完全离散化可能损失精度。
+
+多个域可以使用独立词表和 Embedding 表，也可以在共享大表中分配互不重叠的 ID 区间。后者需要稳定的域偏移与词表版本。希望共享语义的字段，例如历史物品 ID 和候选物品 ID，可以显式共享一张表，但也要确认它们指向相同物品命名空间。
+
+## 2. 词表、未知值和哈希如何设计
+
+词表将原始字符串或外部 ID 映射为连续整数。它需要冻结、版本化，并与训练权重、在线编码器共同发布。若重新排序词表却沿用旧参数，同一个整数将读到另一个类别的向量，形状检查发现不了这种错误。
+
+至少区分两个特殊状态：
+
+- **PAD**：为了组成规则张量而补齐的位置，不代表真实行为。
+- **OOV**：预测时遇到词表之外的真实取值，应使用未知类向量或其他回退表示。
+
+缺失字段还可以使用单独的 MISSING 标记。把 PAD、OOV 和缺失全映射到一行，会把结构填充与真实信息缺失混合在一起。新物品也未必只能使用 OOV：它可能缺少 ID 学习记录，但已有类目、文本和图像，可以通过内容侧特征生成表示。
+
+频率截断能够控制词表大小，将低频类别合并到未知桶，同时减少每个稀有参数只获得极少更新的问题。阈值应由训练期统计确定，并报告尾部和冷启动切片上的效果。
+
+**哈希编码**把原始类别映射到固定桶数，免去显式维护全部词表的成本。代价是碰撞：不同类别可能共享一行。若 `n` 个不同取值近似均匀落入 `m` 个桶，碰撞类别对数的期望为 `n(n−1)/(2m)`；这描述碰撞规模，不能直接换算成预测损失。
+
+Python 内置字符串 `hash()` 会受进程随机种子影响，不适合直接作为跨进程稳定编码。可以使用明确算法、固定命名空间和种子的哈希。下面为教学实现，哈希结果预留了 PAD 和 OOV：
+
+```python
+import hashlib
+
+def hashed_id(field, value, buckets):
+    if buckets <= 0:
+        raise ValueError("positive bucket count required")
+    # 长度前缀消除不同 field/value 拼接边界产生的歧义。
+    field_bytes = str(field).encode("utf-8")
+    value_bytes = str(value).encode("utf-8")
+    key = len(field_bytes).to_bytes(4, "little") + field_bytes + value_bytes
+    digest = hashlib.blake2b(key, digest_size=8).digest()
+    return 2 + int.from_bytes(digest, "little") % buckets
+
+assert hashed_id("device", "phone", 1000) == hashed_id("device", "phone", 1000)
+assert 2 <= hashed_id("category", "camera", 1000) < 1002
+```
+
+这里的 field 前缀保留了输入语义，但最终仍可能哈希到同一桶。如果要求不同域严格隔离，应给每个域独立桶区间。固定哈希只解决编码稳定性；用户 ID 的哈希值仍可能具有可关联性，不能直接当成匿名化证明。
+
+## 3. Embedding 查表等价于选取矩阵行
+
+设参数表为 `E∈R^{V×D}`，类别 `i` 的 one-hot 向量为 `e_i∈R^V`，则：
+
+<Equation tex={String.raw`\operatorname{Embedding}(i)=e_i^\top E=E_{i,:}.`} />
+
+one-hot 只有一个元素为 1，其余为 0，所以实际执行可以直接索引第 `i` 行，无需构造长度为 `V` 的输入向量。Embedding 把类别映射到可学习的稠密表示，相似性由训练目标和数据塑造。
+
+输入 ID 为 `[B]` 时，输出是 `[B,D]`；输入为 `[B,F]` 时，输出是 `[B,F,D]`；行为序列 `[B,L]` 对应 `[B,L,D]`。整数 ID 不参与可微优化，梯度流向被访问的表行和后续网络。
+
+Embedding 的维度没有由类别数量唯一决定的公式。维度增大能增加表示容量，也增加参数、带宽和索引成本；低频类别的数据可能不足以学好很宽的向量。适合通过固定数据和训练预算的对照，结合验证集指标及资源成本选择。
+
+对于相同类别，模型并不为每次出现创建独立参数。它们访问同一行，因此跨样本共享统计信息。这种共享解释了 Embedding 在高基数离散输入中的作用，也决定了热点 ID 的更新和访问模式。
+
+## 4. 多值集合怎样变成一个定长向量
+
+用户兴趣标签或商品属性的数量可能不同。最直接的方法是取出所有向量后聚合。对一条包含 `l` 个有效 ID 的样本：
+
+<Equation tex={String.raw`h_{\mathrm{sum}}=\sum_{j=1}^{l}E_{i_j},\qquad h_{\mathrm{mean}}=\frac1l\sum_{j=1}^{l}E_{i_j}.`} />
+
+sum 保留了数量对向量尺度的影响，mean 减弱数量差异。若行为次数有意义，使用 mean 后可以另加计数特征；若重复事件来自日志重试，则应先去重。max pooling 对每个维度取最大值，语义和梯度路径又有所不同。
+
+加权和 `Σα_j E[i_j]` 可以表达停留时长、时间衰减或注意力。权重是否归一化，会改变表示的尺度。注意力权重若依赖当前候选，就形成候选相关的历史表示，后续每个候选可能需要重新计算。
+
+集合 pooling 丢失顺序：`[A,B]` 与 `[B,A]` 的 sum/mean 相同。表达行为演化需要额外保留位置、时间间隔或序列结构，再使用 RNN、Attention 等编码。单纯增加 Embedding 维度无法恢复聚合时已经丢掉的顺序。
+
+## 5. Padding 与 Jagged 两种变长表示
+
+一种方法把每条序列补到同一长度 `L`，形成 `[B,L]`。同时维护布尔 mask：有效位置为 1，PAD 为 0。mean pooling 的分母取有效数量，不能直接对整个补齐维度求均值。
+
+另一种方法把全部 ID 拼成一维 `values`，再用 `lengths` 或 `offsets` 标出每条样本的边界。它避免存储大量 PAD，常被称为 jagged 或 ragged 表示。
+
+<SearchRecDiagram kind="embedding" />
+
+三条样本 `[2,5]、[7]、[]` 可以表示为：
+
+```text
+values  = [2, 5, 7]
+lengths = [2, 1, 0]
+offsets = [0, 2, 3, 3]
+```
+
+当 `include_last_offset=True` 时，`B` 个 bag 对应 `B+1` 个 offsets，最后一个值等于 `values` 长度。空 bag 的两个边界相等。若省略最后一个边界，最后一个 bag 延伸到输入末尾，需要使用匹配的接口设置。
+
+PyTorch 的 `EmbeddingBag` 将查表与聚合合并，可避免显式产生全部查表结果的中间张量。[2] TorchRec 的 `JaggedTensor` 和 `KeyedJaggedTensor` 进一步组织变长值、长度和多个特征键，适用于多表特征和分布式数据流。[3]
+
+### 检查空集合、padding 和输出形状
+
+下面以确定的权重检查两种表示是否一致：
+
+```python
+import torch
+from torch import nn
+
+torch.manual_seed(0)
+V, D, PAD = 10, 4, 0
+weight = torch.arange(V * D, dtype=torch.float32).reshape(V, D) / 10
+weight[PAD].zero_()
+
+lookup = nn.Embedding.from_pretrained(weight.clone(), freeze=False, padding_idx=PAD)
+bag = nn.EmbeddingBag(V, D, mode="mean", padding_idx=PAD,
+                      include_last_offset=True)
+with torch.no_grad():
+    bag.weight.copy_(weight)
+
+padded = torch.tensor([[2, 5], [7, PAD], [PAD, PAD]], dtype=torch.long)
+mask = padded.ne(PAD)
+vectors = lookup(padded)                       # [3, 2, 4]
+pooled = (vectors * mask.unsqueeze(-1)).sum(1)
+pooled = pooled / mask.sum(1, keepdim=True).clamp_min(1)
+
+values = torch.tensor([2, 5, 7], dtype=torch.long)
+offsets = torch.tensor([0, 2, 3, 3], dtype=torch.long)
+bag_pooled = bag(values, offsets)               # [3, 4]
+assert bag_pooled.shape == (3, D)
+assert torch.allclose(pooled, bag_pooled)
+assert torch.equal(bag_pooled[2], torch.zeros(D))
+
+# 把 PAD 显式放入第二个 bag，mean 的分母仍只计算有效 ID。
+with_padding = bag(torch.tensor([2, 5, 7, PAD]),
+                   torch.tensor([0, 2, 4, 4]))
+assert torch.allclose(with_padding, bag_pooled)
+bag_pooled.sum().backward()
+assert torch.equal(bag.weight.grad[PAD], torch.zeros(D))
+```
+
+`padding_idx` 使该行不从 Embedding 操作收到梯度，`EmbeddingBag` 也会将它排除在聚合之外。新建模块的 padding 行通常初始化为零；从已有权重加载时，应检查这一行的实际值。权重复制、其他计算路径或某些优化器更新规则仍可能改变它，不能仅凭参数名断言它永远为零。
+
+空历史需要有明确语义。零向量是简单回退，也可以增加“无历史”特征或使用可学习默认向量。Attention 中如果整行位置都被屏蔽，再直接做全负无穷 softmax，可能产生 NaN，应为这类样本单独处理。
+
+## 6. 重复 ID 怎样累积梯度
+
+同一个 ID 在一个 batch 中出现多次，它的梯度会相加。若查表后直接求和，ID `i` 出现 `c_i` 次，则每个维度收到 `c_i` 的梯度。对于 mean pooling，每个 bag 中的贡献还要除以有效长度。
+
+```python
+import torch
+from torch import nn
+
+embedding = nn.Embedding(8, 3, sparse=True)
+ids = torch.tensor([2, 2, 5], dtype=torch.long)
+embedding(ids).sum().backward()
+gradient = embedding.weight.grad.coalesce()
+assert gradient.is_sparse
+assert gradient.indices().tolist() == [[2, 5]]
+assert torch.equal(gradient.values(),
+                   torch.tensor([[2., 2., 2.], [1., 1., 1.]]))
+assert not embedding.weight.is_sparse
+```
+
+`coalesce()` 合并稀疏梯度中重复的行索引。它改变表示方式，不改变这些贡献相加后的数学结果。若采样导致热门物品被反复出现，更新频率和梯度规模就会呈现偏斜；是否按频率缩放、如何正则化，都属于训练设计的一部分。
+
+这里应区分三个层次：输入的 one-hot 在逻辑上稀疏；一次查表只访问少量参数行；`sparse=True` 让梯度采用稀疏表示。参数表 `weight` 本身仍是 `[V,D]` 的稠密存储。
+
+稀疏梯度也限制优化器选择。PyTorch 官方文档列出的支持包括 SGD、SparseAdam，以及 CPU 上的 Adagrad，具体还要核对版本与参数组合。[1] 常见做法是分别管理 Embedding 和稠密网络的优化器。对整张表显式施加 L2 损失会产生遍及全表的梯度，可能破坏原本只更新被访问行的成本假设。
+
+## 7. 数值特征怎样处理才稳定
+
+价格、曝光计数、距上次行为的时间间隔，通常具有不同量纲和长尾分布。可以依次考虑：
+
+1. 修正无效值，区分缺失和真实零值。
+2. 对非负长尾计数使用 `log1p`，对极端值按训练期确定的边界裁剪。
+3. 使用训练集均值和标准差归一化，并为零方差字段设置保护。
+4. 必要时分桶，将数值区间作为类别，同时保留连续值供模型使用。
+
+缺失值填充为均值后，可增加缺失指示，帮助模型区分“观察到平均值”和“没有观察”。单位转换也属于模型输入契约：毫秒与秒、元与分即使形状相同，也会让模型行为完全不同。
+
+频率、历史 CTR 等聚合特征还要满足预测时可得。针对当前标签计算出来的目标编码容易泄漏；归一化统计若包含测试期也会引入未来分布。编码器、裁剪边界和统计版本都应随模型保存。
+
+## 8. Embedding 为什么常受内存与带宽限制
+
+仅参数表的容量近似为：
+
+<Equation tex={String.raw`M_{\mathrm{weight}}=VDb\ \text{bytes},`} />
+
+`b` 是每个参数占用的字节数。教学计算：一亿行、64 维、FP32 的表需要 `10⁸×64×4=25.6 GB`，这里使用十进制 GB。若标准 FP32 Adam 为每个参数保存两个同形状状态，再增加 51.2 GB；梯度、主权重、激活和通信缓冲尚未计入。具体优化器或行级状态方案会改变这个估计。
+
+一次 lookup 可能只读取少量行，每行内部连续，但不同 ID 的访问分散；热门行容易重复访问，长尾行缺乏局部性。性能取决于表大小、维度、访问分布、缓存与批处理，不能仅根据 FLOPs 推断。
+
+表超过单设备容量后，可以按表分片或按行分片。table-wise 把整张表放到一个设备，适合表间容量可平衡的情况；row-wise 切分行，需要把 ID 发往拥有对应行的设备，再收集结果。多表输入还可能采用其他混合方案，通信量与负载倾斜都需要测量。[3]
+
+量化和冷热缓存能够减少容量或访问成本，但会引入精度、更新一致性和未命中延迟问题。Embedding 向量若用于召回，压缩误差还会影响相似度及 Top-K 结果，应同时测量模型指标与检索误差。
+
+## 9. 把编码契约落到模型接口
+
+一套可复用的输入说明应写明：每个域的 ID 范围、PAD/OOV、dtype、数值单位、归一化版本、序列排序、截断方向、最大长度、空历史策略，以及每个字段的可用时间。
+
+拼接多个单值 Embedding 常得到 `[B,F×D]`，便于送入 MLP；保留 `[B,F,D]` 则方便计算特征交互。多值池化得到 `[B,D]`，序列模型还需保留 `[B,L,D]` 和 mask。检查形状时，也要检查每个维度对应哪个语义。
+
+先用少量手工样本核对编码与 pooling，再统计真实数据上的 OOV、空历史、长度和热点分布。本文代码验证的是张量和梯度行为；选择哪些字段、使用多大维度，还需要在固定数据和评价口径下做实验。下一篇会使用这些离散输入实现<a href={withBase('blog/search-ads-rec-05-logistic-regression-fm/')}>LR 与 FM</a>，观察特征怎样影响预测分数。
+
+## 参考资料
+
+1. PyTorch. [Embedding](https://docs.pytorch.org/docs/stable/generated/torch.nn.Embedding.html)。形状、padding、稀疏梯度和优化器支持。
+2. PyTorch. [EmbeddingBag](https://docs.pytorch.org/docs/stable/generated/torch.nn.EmbeddingBag.html)。offsets、空 bag、padding 与 pooling；`per_sample_weights` 仅支持 sum 模式。
+3. TorchRec. [Concepts](https://docs.pytorch.org/torchrec/concepts.html)、[High-level architecture](https://docs.pytorch.org/torchrec/high-level-arch.html)。变长特征、Embedding 集合与分片。
+4. Naumov et al. [Deep Learning Recommendation Model](https://arxiv.org/abs/1906.00091), 2019。稀疏特征与稠密网络结合的代表结构。

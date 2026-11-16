@@ -1,0 +1,242 @@
+---
+title: '搜广推模型基础（五）：从 Logistic Regression 到 FM'
+description: '从对数几率与最大似然推导 LR，再解释二阶特征交互、FM 的共享参数和线性复杂度计算，给出前向、梯度对照与训练代码。'
+category: '搜广推模型'
+pubDate: '2026-11-16T08:05:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import SearchRecSeries from '../../components/SearchRecSeries.astro';
+import SearchRecDiagram from '../../components/SearchRecDiagram.astro';
+import { withBase } from '../../lib/blog';
+
+<SearchRecSeries current={5} />
+
+一条曝光样本包含地域、设备、物品类目、价格等特征，标签表示是否点击。最简单的模型可以为每个特征分配一个权重，将它们相加后输出点击概率。接下来会遇到一个问题：同一个物品类目，对不同用户群体可能有不同影响。表达这种组合关系，需要让特征之间发生交互。
+
+Logistic Regression（逻辑回归，简称 LR）适合建立清楚、容易检查的概率预测基线。Factorization Machine（因子分解机，简称 FM）在此基础上加入共享参数的二阶交互。本篇从损失推导到 PyTorch 实现，说明两者分别学到了什么。
+
+## 1. LR 怎样把特征映射为概率
+
+设编码后的输入为 `x∈Rⁿ`，其中 `n` 是所有特征坐标的数量。类别字段经过 one-hot 或等价的稀疏编码，数值字段保留经过处理的数值。LR 先计算线性得分，再经过 sigmoid：
+
+<Equation tex={String.raw`z=b+\sum_{i=1}^{n}w_ix_i,\qquad p=\sigma(z)=\frac1{1+\exp(-z)}.`} />
+
+`z` 称为 logit。把概率表达式整理后可得：
+
+<Equation tex={String.raw`\log\frac{p}{1-p}=b+w^\top x.`} />
+
+`p/(1−p)` 是事件发生与不发生的概率之比，称为 odds（几率）。因此 LR 假设**对数几率**与输入线性相关。保持其他特征不变，`x_i` 增加一个单位，会让几率乘以 `exp(w_i)`；概率本身的增量还取决于当前得分。
+
+教学例子：截距为 −2，移动设备权重为 0.3，某物品类目权重为 0.8，两个特征同时激活时 `z=−0.9`，预测概率约为 0.289。这些数字用于演示计算，不代表真实点击率。若曝光数据经过采样，或损失使用了类别权重，还需要核对概率是否对应目标曝光分布。
+
+类别编码也会影响系数解释。一个域使用完整 one-hot 并保留截距时，可以在该域所有权重上加同一个常数、再从截距减去该常数，得到相同预测。删除一个参考类别或施加正则化可以处理这种不唯一性；解释权重时应说明所用编码。
+
+## 2. 从似然到梯度：为什么出现 p−y
+
+给定输入，二分类标签可按 Bernoulli 分布建模。一条样本的似然是 `p^y(1−p)^(1−y)`，取负对数得到二元交叉熵：
+
+<Equation tex={String.raw`\ell=-y\log p-(1-y)\log(1-p)=\log(1+\exp z)-yz.`} />
+
+对 `z` 求导，利用 `σ′(z)=σ(z)(1−σ(z))`，可得：
+
+<Equation tex={String.raw`\frac{\partial\ell}{\partial z}=p-y,\qquad
+\frac{\partial\ell}{\partial w_i}=(p-y)x_i,\qquad
+\frac{\partial\ell}{\partial b}=p-y.`} />
+
+标签为 1、预测偏低时，`p−y` 为负，梯度下降会推动当前样本的 logit 增大。标签为 0 时则相反。对于取值为零的特征，当前样本不会通过这一数据损失更新其权重。
+
+实际计算应使用 `binary_cross_entropy_with_logits`，直接输入 logit。[3] 先 sigmoid、再自行取对数，容易在极大或极小分数下遇到数值问题。已有 logits 接口内部会使用稳定的 softplus 形式。
+
+如果模型只有截距，训练集共有 `N₊` 个正例、`N₋` 个负例，在两类都存在且没有正则化时，最优截距为 `log(N₊/N₋)`。这给出了一个有用的检查：只含偏置的模型应学到训练分布的平均正例率。
+
+固定输入下，LR 的交叉熵目标是凸的，加入凸的 L1/L2 正则后仍然如此。完全线性可分、无正则的数据可能使最优权重趋于无穷，因此“凸”并不自动意味着存在有限且唯一的解。
+
+## 3. 线性模型的交互限制在哪里
+
+假设 `x₁` 表示“用户属于某地域”，`x₂` 表示“物品属于某类目”。LR 中，这个类目带来的 logit 增量始终为 `w₂`。如果该类目对地域 A 用户很有吸引力、对地域 B 用户吸引力较弱，一个共享的 `w₂` 很难表达这种差异。
+
+可以增加交叉特征 `x₁x₂`：
+
+<Equation tex={String.raw`z=b+\sum_iw_ix_i+\sum_{i<j}a_{ij}x_ix_j.`} />
+
+当两个特征同时激活时，`a_ij` 才贡献分数。若地域有一千个取值、类目有一万个取值，仅这一组交叉就可能有一千万个组合。大量组合出现次数很少，甚至从未出现，独立估计每个系数会遇到数据稀疏和参数规模问题。
+
+这里的“二阶”指两个特征的乘积。对同一个单值类别域，两个不同类别通常不会同时激活，因此它们的乘积一直为零。跨域交叉、同域多值特征之间的交叉，以及连续数值乘积，具有不同含义，构造时要结合字段语义。
+
+人工交叉仍然有用：它能直接编码明确的规则和业务关系。FM 提供另一种参数化方式，让不同组合通过共享向量相互影响。
+
+## 4. FM 用共享向量生成交叉系数
+
+二阶 FM 为每个特征坐标分配一个 `D` 维隐向量 `v_i`，用两个隐向量的内积生成交互系数：[1][2]
+
+<Equation tex={String.raw`z=b+\sum_iw_ix_i+\sum_{i<j}\langle v_i,v_j\rangle x_ix_j,\qquad v_i\in\mathbb R^D.`} />
+
+例如 `v₁=[1,2]`、`v₂=[3,4]`，对应二阶系数为 11；若 `x₁=1`、`x₂=0.5`，这个交互对 logit 的贡献是 5.5。数值特征的取值会缩放交互，归一化因此直接影响优化的尺度。
+
+<SearchRecDiagram kind="fm" />
+
+同一个 `v_i` 参与特征 `i` 与所有其他特征的交互。即使组合 `(i,j)` 没在训练中出现，只要 `i`、`j` 分别在其他组合中得到充分训练，模型仍能通过 `〈v_i,v_j〉` 生成一个系数。这是参数共享带来的泛化机会，效果取决于数据是否适合这种共享假设。
+
+显式存储所有成对系数需要约 `O(n²)` 参数，FM 的交互参数为 `O(nD)`。它也约束了不同交互系数之间的关系，因此容量可能不足。这里的因子分解作用于共享向量形成的系数；不能据此认定去掉对角线后的整个交互矩阵一定只有 `D` 的秩。
+
+只保留用户 ID 和物品 ID 两个激活域时，FM 的交互部分变为 `〈v_user,v_item〉`，加上全局、用户和物品偏置，就是常见矩阵分解预测形式。FM 将这一形式推广到上下文和其他特征。
+
+## 5. 二阶项怎样从平方复杂度降下来
+
+直接枚举全部激活特征对，若每条样本有 `m` 个非零特征，需要约 `O(m²D)` 次计算。FM 利用平方展开合并这些乘积。先固定隐向量维度 `d`：
+
+<Equation tex={String.raw`\left(\sum_i v_{id}x_i\right)^2
+=\sum_i v_{id}^2x_i^2+2\sum_{i<j}v_{id}v_{jd}x_ix_j.`} />
+
+减去自乘项，再对 `d` 求和：
+
+<Equation tex={String.raw`\sum_{i<j}\langle v_i,v_j\rangle x_ix_j
+=\frac12\sum_{d=1}^{D}\left[
+\left(\sum_i v_{id}x_i\right)^2-\sum_i v_{id}^2x_i^2
+\right].`} />
+
+计算分为三步：取出激活特征向量并乘以特征值；计算向量和的逐元素平方；减去每个向量逐元素平方的和，再沿 `D` 维求和。两个求和都只遍历激活特征，成本变为 `O(mD)`。
+
+设 `h_d=Σ_i v_id x_i`，对一个隐向量元素求导：
+
+<Equation tex={String.raw`\frac{\partial z}{\partial v_{id}}
+=x_i(h_d-v_{id}x_i),\qquad
+\frac{\partial\ell}{\partial v_{id}}
+=(p-y)x_i(h_d-v_{id}x_i).`} />
+
+减去 `v_id x_i` 后，剩余部分恰好是其他特征的贡献。若所有隐向量都初始化为零，交互项的这些梯度也全部为零，模型无法从这一状态开始学习交互。实践中可使用小幅随机初始化。
+
+## 6. 用稀疏 ID 和数值实现 FM
+
+不必构造 `[B,n]` 的巨大稠密输入。每个样本只保存激活坐标的 ID 和相应数值，补齐后得到 `[B,F]`。这里的 `F` 是每条样本的存储槽位数；多值域可能占多个槽位，因此不一定等于语义上的域数。
+
+| 中间量 | 形状 | 含义 |
+| --- | --- | --- |
+| `ids`、`values` | `[B,F]` | 激活特征坐标及数值 |
+| `linear(ids)` | `[B,F,1]` | 一阶权重 |
+| `factors(ids)` | `[B,F,D]` | 交互隐向量 |
+| `weighted.sum(1)` | `[B,D]` | 特征向量加权和 |
+| `logits` | `[B]` | 未经过 sigmoid 的输出 |
+
+不同类别域必须分配不同 ID 区间。数值域可以占一个固定坐标，把标准化数值放入 `values`。PAD 使用 ID 0、数值 0。**同一条样本内重复出现同一个坐标时，应先合并数值**，否则按槽位计算会额外引入同一坐标之间的自交互，不再等价于上述 FM 定义。
+
+下面的代码同时检查前向结果和梯度。朴素版本显式枚举特征对，用作独立参照；随机输入只是代数核对，不构成模型效果实验。
+
+```python
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+class SparseFM(nn.Module):
+    def __init__(self, num_features, dim):
+        super().__init__()
+        self.bias = nn.Parameter(torch.zeros(()))
+        self.linear = nn.Embedding(num_features, 1, padding_idx=0)
+        self.factors = nn.Embedding(num_features, dim, padding_idx=0)
+        nn.init.zeros_(self.linear.weight)
+        nn.init.normal_(self.factors.weight, std=0.02)
+        with torch.no_grad():
+            self.factors.weight[0].zero_()
+
+    def forward(self, ids, values):
+        first = (self.linear(ids).squeeze(-1) * values).sum(1)
+        weighted = self.factors(ids) * values.unsqueeze(-1)
+        second = 0.5 * (
+            weighted.sum(1).square() - weighted.square().sum(1)
+        ).sum(-1)
+        return self.bias + first + second
+
+def naive_logits(model, ids, values):
+    first = (model.linear(ids).squeeze(-1) * values).sum(1)
+    result = model.bias + first
+    v = model.factors(ids)
+    for i in range(ids.shape[1]):
+        for j in range(i + 1, ids.shape[1]):
+            result = result + (v[:, i] * v[:, j]).sum(-1) * \
+                     values[:, i] * values[:, j]
+    return result
+
+torch.manual_seed(7)
+model = SparseFM(16, 4).double()
+ids = torch.tensor([[1, 5, 9, 0], [2, 6, 10, 13]], dtype=torch.long)
+values = torch.tensor([[1., 1., 0.5, 0.],
+                       [1., 1., -0.4, 1.2]], dtype=torch.float64)
+labels = torch.tensor([1., 0.], dtype=torch.float64)
+fast, slow = model(ids, values), naive_logits(model, ids, values)
+torch.testing.assert_close(fast, slow, atol=1e-12, rtol=1e-12)
+
+params = tuple(model.parameters())
+fast_grad = torch.autograd.grad(
+    F.binary_cross_entropy_with_logits(fast, labels), params)
+slow_grad = torch.autograd.grad(
+    F.binary_cross_entropy_with_logits(slow, labels), params)
+for a, b in zip(fast_grad, slow_grad):
+    torch.testing.assert_close(a, b, atol=1e-12, rtol=1e-12)
+
+# 本示例使用默认稠密梯度，适合小表教学。
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+optimizer.zero_grad()
+loss = F.binary_cross_entropy_with_logits(model(ids, values), labels)
+loss.backward()
+optimizer.step()
+assert torch.isfinite(loss)
+```
+
+向量化实现会构造 `[B,F,D]` 中间量，大规模实现还可以合并查表、加权与求和，减少中间张量写入。优化之前应保留朴素实现或高精度参照，尤其在低精度下，两个相近大数相减可能放大二阶项的数值误差。
+
+## 7. 正则化、稀疏更新与 FTRL
+
+LR 和 FM 都需要控制低频特征的过拟合。常见目标为：
+
+<Equation tex={String.raw`\mathcal L=\frac1B\sum_{b=1}^{B}\ell_b
++\lambda_1\|w\|_1+\frac{\lambda_2}{2}\|w\|_2^2
++\frac{\lambda_v}{2}\sum_i\|v_i\|_2^2.`} />
+
+L1 倾向于产生零权重，适合希望筛选稀疏一阶特征的场景；L2 平滑地约束权重规模。FM 的一阶权重与隐向量可以使用不同系数，偏置通常单独处理。数值特征未归一化时，同样的正则系数对不同字段产生的实际约束并不相同。
+
+**FTRL-Proximal**是稀疏线性模型常见的在线优化方法。[4] 它为每个坐标累计梯度信息，同时通过近端更新处理正则。一个常见参数化如下，`g_i` 是本步数据损失梯度，`n_i` 累计梯度平方，`a_i` 是辅助累计量：
+
+<Equation tex={String.raw`\delta_i=\frac{\sqrt{n_i+g_i^2}-\sqrt{n_i}}{\alpha},\quad
+a_i\leftarrow a_i+g_i-\delta_iw_i,\quad
+n_i\leftarrow n_i+g_i^2.`} />
+<Equation tex={String.raw`w_i=
+\begin{cases}
+0,& |a_i|\le\lambda_1,\\
+-\dfrac{a_i-\operatorname{sign}(a_i)\lambda_1}
+{(\beta+\sqrt{n_i})/\alpha+\lambda_2},&\text{其他情况}.
+\end{cases}`} />
+
+其中 `α>0` 控制步长尺度，`β` 平滑早期更新。公式中的阈值直接产生零权重，历史梯度平方又使不同坐标获得不同的有效步长。正则定义与实现可能采用不同常数约定，不能只按参数名搬用系数。FTRL 也不会自动消除数据偏差或提供实时特征的一致性。
+
+前面的教学代码使用小型稠密参数和 Adam。大表采用稀疏梯度时，要核对优化器支持；显式计算全表 L2 会访问全部参数，改变更新成本。仅正则当前访问行，又改变了低频与高频参数受到正则的频率，应明确所采用的目标和实现。
+
+## 8. FM、FFM 与深层模型怎样区分
+
+标准 FM 为每个特征保留一个向量，无论它与哪个域交互都使用相同向量。**Field-aware FM（FFM）**进一步按对方所属域选择向量：
+
+<Equation tex={String.raw`a_{ij}=\left\langle v_{i,f(j)},\,v_{j,f(i)}\right\rangle.`} />
+
+`f(i)` 表示特征 `i` 的域。地域与类目交互、地域与设备交互，可以使用不同地域向量。这样增加了表达能力，也增加参数和计算；标准 FM 的统一平方和化简通常不能直接照搬。
+
+DeepFM 将 FM 分支与深层 MLP 分支结合，并共享部分 Embedding，用来同时学习二阶结构和更复杂的非线性关系。[5] DCN 显式组织特征交叉，DIN 将候选物品引入用户历史聚合。它们的结构动机可以从 FM 的限制继续理解：交互阶数有限、所有域共享同一交互向量、固定特征无法充分表示候选相关兴趣。
+
+增加模型容量是否有效，需要在相同数据上比较。特征泄漏、错误负例或训练测试分布不一致，可能让复杂模型更快拟合错误信号。
+
+## 9. 怎样建立有解释力的 LR/FM 对照
+
+两组模型复用同一套词表、数值处理、标签窗口与时间切分。先检查无特征偏置模型和 LR，再增加 FM 二阶项，这样能分辨收益来自特征编码还是交互能力。
+
+评价至少记录 LogLoss、AUC、分组排序指标和校准，并按高频/低频特征、老用户/新用户、历史长度等切片。训练损失下降、验证损失上升时，检查正则、维度、训练轮数和稀有组合；两者都很差时，先检查标签及输入，再讨论表达能力。
+
+一个有用的消融是固定隐向量维度与训练预算，分别去掉一阶项、去掉二阶项，再比较不同域交互的贡献。可解释性分析应在固定输入上做受控变化；仅看向量某一维的大小通常没有稳定语义，因为旋转隐向量空间可以保持内积不变。
+
+FM 让用户和物品的交互系数具有向量内积形式。如果进一步约束两侧分别计算表示，就可以把物品向量提前保存，用一次检索获得大量候选。下一篇将进入<a href={withBase('blog/search-ads-rec-06-two-tower-retrieval/')}>双塔召回</a>。
+
+## 参考资料
+
+1. Steffen Rendle. [Factorization Machines](https://doi.org/10.1109/ICDM.2010.127), ICDM 2010。FM 定义、稀疏数据上的参数共享与高效计算。
+2. Dive into Deep Learning. [Factorization Machines](https://d2l.ai/chapter_recommender-systems/fm.html)。二阶项推导与模型实现。
+3. PyTorch. [BCEWithLogitsLoss](https://docs.pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html)。稳定二元交叉熵及权重语义。
+4. McMahan et al. [Ad Click Prediction: a View from the Trenches](https://doi.org/10.1145/2487575.2488200), KDD 2013。FTRL-Proximal 与大规模稀疏点击预测。
+5. Guo et al. [DeepFM](https://arxiv.org/abs/1703.04247), 2017。FM 与深层网络的组合。

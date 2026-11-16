@@ -1,0 +1,162 @@
+---
+interface Props {
+  kind: 'pipeline' | 'timeline' | 'metrics' | 'embedding' | 'fm' | 'towers' | 'negatives' | 'ann';
+}
+const { kind } = Astro.props;
+const titles = {
+  pipeline: '一次请求与一次学习：候选逐级筛选，反馈进入下一轮训练',
+  timeline: '样本时间线：预测时可见的特征与预测后收集的标签',
+  metrics: '评价对象：概率、请求内排序、任务召回与近邻检索',
+  embedding: '变长特征：扁平 ID、边界偏移和池化后的定长表示',
+  fm: 'FM 二阶交互：每个特征共享一个隐向量',
+  towers: '双塔的训练与检索：两侧独立编码，最后计算相似度',
+  negatives: '批内负例：对角线配对与重复物品形成的假负例',
+  ann: '向量检索的三种近似：缩小搜索范围、沿图访问与压缩距离',
+};
+---
+<figure>
+  <div class="scroll" tabindex="0" role="region" aria-label={`${titles[kind]}，可横向滚动`}>
+    <svg viewBox="0 0 760 310" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={titles[kind]}>
+      <defs>
+        <marker id={`arrow-${kind}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8Z" fill="#697b8e" />
+        </marker>
+      </defs>
+      {kind === 'pipeline' && <>
+        <text x="26" y="30" class="label">在线请求：上下文 + 当前可用物品</text>
+        {[['多路召回', '全库 → 候选'], ['粗排 / 精排', '候选 → 分数'], ['列表重排', '分数 + 约束'], ['曝光与反馈', '位置 / 点击 / 转化']].map(([a, b], i) => <>
+          <rect x={26 + i * 185} y="55" width="155" height="78" rx="8" class={i === 3 ? 'green' : 'blue'} />
+          <text x={103 + i * 185} y="86" text-anchor="middle">{a}</text>
+          <text x={103 + i * 185} y="113" text-anchor="middle" class="small">{b}</text>
+          {i < 3 && <path d={`M${183 + i * 185} 94h23`} class="arrow" marker-end={`url(#arrow-${kind})`} />}
+        </>)}
+        <path d="M658 135v62H405" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <rect x="205" y="166" width="200" height="68" rx="8" class="orange" />
+        <text x="305" y="194" text-anchor="middle">日志 → 样本 → 训练</text>
+        <text x="305" y="217" text-anchor="middle" class="small">时间切分、离线评价</text>
+        <path d="M205 201H103v-65" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <text x="29" y="278" class="small">模型 / 特征 / 索引一起发布；反馈由旧策略选择的曝光产生。</text>
+      </>}
+      {kind === 'timeline' && <>
+        <path d="M28 155H728" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <rect x="30" y="70" width="258" height="58" rx="8" class="blue" />
+        <text x="159" y="96" text-anchor="middle">历史行为与特征快照</text>
+        <text x="159" y="117" text-anchor="middle" class="small">事件已发生，系统也已拿到</text>
+        <rect x="309" y="70" width="314" height="58" rx="8" class="green" />
+        <text x="466" y="96" text-anchor="middle">标签观察区间 (t, t + H]</text>
+        <text x="466" y="117" text-anchor="middle" class="small">点击 / 转化可在预测后发生</text>
+        {[['t − 1', 130], ['预测 t', 305], ['t + H', 625], ['水位 W', 707]].map(([t, x]) => <>
+          <path d={`M${x} 146v18`} class="line" /><text x={x} y="187" text-anchor="middle" class="small">{t}</text>
+        </>)}
+        <path d="M305 47v92M625 47v92" class="dash" />
+        <text x="35" y="237">特征：event_time ≤ t 且 available_time ≤ t</text>
+        <text x="35" y="272">成熟标签：观察窗已结束，且日志完整性水位覆盖 t + H</text>
+      </>}
+      {kind === 'metrics' && <>
+        {[['概率是否可信', 'LogLoss · Brier · 校准', '曝光样本 + 成熟标签', 'blue'],
+          ['一个请求内排得怎样', 'AUC / GAUC · NDCG', '固定分组与候选集合', 'green'],
+          ['相关物品找回多少', '任务 Recall@K · Hit@K', '相关集合 / 留出正例', 'orange'],
+          ['索引近似损失多少', 'ANN Recall@K · 延迟', '同一模型的精确 Top-K', 'purple']].map(([a, b, c, color], i) => <>
+          <rect x={26 + (i % 2) * 370} y={24 + Math.floor(i / 2) * 140} width="338" height="117" rx="8" class={color} />
+          <text x={44 + (i % 2) * 370} y={54 + Math.floor(i / 2) * 140}>{a}</text>
+          <text x={44 + (i % 2) * 370} y={86 + Math.floor(i / 2) * 140} class="small">{b}</text>
+          <text x={44 + (i % 2) * 370} y={117 + Math.floor(i / 2) * 140} class="small">{c}</text>
+        </>)}
+      </>}
+      {kind === 'embedding' && <>
+        <text x="26" y="33">三条样本的兴趣 ID： [2, 5]、[7]、[]</text>
+        <text x="26" y="78" class="small">values</text>
+        {[2, 5, 7].map((v, i) => <><rect x={112 + i * 58} y="52" width="48" height="38" rx="4" class={i < 2 ? 'blue' : 'green'} /><text x={136 + i * 58} y="78" text-anchor="middle">{v}</text></>)}
+        <text x="336" y="78" class="small">offsets = [0, 2, 3, 3]</text>
+        <path d="M175 99v40" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <rect x="28" y="150" width="300" height="115" rx="8" class="purple" />
+        <text x="48" y="178">Embedding 表 E：[V, D]</text>
+        <text x="48" y="211" class="small">取 E[2]、E[5]、E[7]</text>
+        <text x="48" y="244" class="small">按 offsets 指定的区间聚合</text>
+        <path d="M338 208h65" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <rect x="416" y="146" width="314" height="125" rx="8" class="orange" />
+        <text x="437" y="175">mean pooling → [3, D]</text>
+        <text x="437" y="207" class="small">第 1 行：(E[2] + E[5]) / 2</text>
+        <text x="437" y="232" class="small">第 2 行：E[7]</text>
+        <text x="437" y="257" class="small">第 3 行：零向量（空 bag）</text>
+      </>}
+      {kind === 'fm' && <>
+        <text x="28" y="32">三个激活特征，每一对的系数由两个向量的内积给出</text>
+        {[['用户地域', 'x₁ · v₁', 130], ['物品类目', 'x₂ · v₂', 380], ['时段', 'x₃ · v₃', 630]].map(([a, b, x]) => <>
+          <rect x={Number(x) - 88} y="65" width="176" height="67" rx="8" class="blue" />
+          <text x={x} y="91" text-anchor="middle">{a}</text><text x={x} y="117" text-anchor="middle" class="small">{b}</text>
+        </>)}
+        <path d="M130 139Q250 222 380 139M380 139Q506 222 630 139M130 140Q380 310 630 140" class="line" />
+        <text x="215" y="185" class="small">〈v₁, v₂〉</text>
+        <text x="472" y="185" class="small">〈v₂, v₃〉</text>
+        <text x="343" y="235" class="small">〈v₁, v₃〉</text>
+        <text x="40" y="285" class="small">共享 v₁：地域 × 类目与地域 × 时段共同更新同一个特征向量。</text>
+      </>}
+      {kind === 'towers' && <>
+        <rect x="28" y="24" width="276" height="58" rx="8" class="blue" />
+        <text x="166" y="49" text-anchor="middle">用户 / Query / 历史</text><text x="166" y="71" text-anchor="middle" class="small">请求时可用</text>
+        <rect x="456" y="24" width="276" height="58" rx="8" class="green" />
+        <text x="594" y="49" text-anchor="middle">物品 ID / 内容 / 属性</text><text x="594" y="71" text-anchor="middle" class="small">可离线编码</text>
+        <path d="M166 86v24" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <path d="M594 86v24" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <rect x="73" y="119" width="186" height="52" rx="8" class="blue" /><text x="166" y="152" text-anchor="middle">用户塔 → U [B,D]</text>
+        <rect x="501" y="119" width="186" height="52" rx="8" class="green" /><text x="594" y="152" text-anchor="middle">物品塔 → V [B,D]</text>
+        <path d="M166 175v37h107" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <path d="M594 175v37H487" class="arrow" marker-end={`url(#arrow-${kind})`} />
+        <rect x="280" y="185" width="200" height="64" rx="8" class="orange" />
+        <text x="380" y="213" text-anchor="middle">训练：UVᵀ / τ</text><text x="380" y="236" text-anchor="middle" class="small">[B, B] 对比得分</text>
+        <text x="28" y="287" class="small">上线：只编码当前请求 → 查询已构建的全库物品向量索引。</text>
+      </>}
+      {kind === 'negatives' && <>
+        <text x="36" y="32">物品列</text>
+        {['A', 'B', 'A', 'C'].map((t, j) => <text x={261 + j * 75} y="35" text-anchor="middle">{t}</text>)}
+        {['用户 1 → A', '用户 2 → B', '用户 3 → A', '用户 4 → C'].map((t, i) => <>
+          <text x="34" y={82 + i * 51}>{t}</text>
+          {[0, 1, 2, 3].map(j => <>
+            <rect x={230 + j * 75} y={52 + i * 51} width="62" height="42" rx="5" class={i === j ? 'green' : ((i === 0 && j === 2) || (i === 2 && j === 0)) ? 'orange' : 'blue'} />
+            <text x={261 + j * 75} y={80 + i * 51} text-anchor="middle" class="small">{i === j ? '正配对' : ((i === 0 && j === 2) || (i === 2 && j === 0)) ? '同物品' : '负候选'}</text>
+          </>)}
+        </>)}
+        <text x="568" y="99" class="small">绿色：目标列</text>
+        <text x="568" y="139" class="small">橙色：重复 A</text>
+        <text x="568" y="179" class="small">蓝色：待判别候选</text>
+        <text x="36" y="288" class="small">重复目标可屏蔽或并入多正例；不同物品也可能满足同一需求。</text>
+      </>}
+      {kind === 'ann' && <>
+        <text x="33" y="30">IVF：选择分区</text><text x="279" y="30">HNSW：沿图搜索</text><text x="543" y="30">PQ：压缩表示</text>
+        {[0, 1, 2].map(i => <rect x={22 + i * 247} y="48" width="227" height="194" rx="9" class="panel" />)}
+        {[[80,100],[185,103],[102,191]].map(([x,y], i) => <>
+          <circle cx={x} cy={y} r="36" class={i === 0 ? 'orange' : 'blue'} />
+          <circle cx={x - 13} cy={y - 8} r="4" class="dot" /><circle cx={x + 14} cy={y - 12} r="4" class="dot" /><circle cx={x + 3} cy={y + 16} r="4" class="dot" />
+        </>)}
+        <text x="157" y="193" class="small">探测 1 簇</text>
+        <path d="M300 94L451 78L392 157L312 202L461 213L451 78M300 94L392 157L461 213" class="line" />
+        {[[300,94],[451,78],[392,157],[312,202],[461,213]].map(([x,y], i) => <circle cx={x} cy={y} r="11" class={i < 3 ? 'orange' : 'blue'} />)}
+        {[0,1,2,3].map(i => <>
+          <rect x="540" y={68+i*38} width="104" height="23" rx="3" class="blue" />
+          <path d={`M648 ${80+i*38}h22`} class="arrow" marker-end={`url(#arrow-${kind})`} />
+          <rect x="678" y={68+i*38} width="40" height="23" rx="3" class="green" />
+          <text x="698" y={85+i*38} text-anchor="middle" class="tiny">{[17,3,92,8][i]}</text>
+        </>)}
+        <text x="32" y="276" class="small">未探测的分区可能漏召回</text><text x="281" y="276" class="small">只访问部分图节点</text><text x="539" y="276" class="small">码字产生距离误差</text>
+      </>}
+    </svg>
+  </div>
+  <figcaption>{titles[kind]}。示意图用于解释结构，不表示实测规模或效果。</figcaption>
+</figure>
+<style>
+  figure { margin: 28px 0; }
+  .scroll { overflow-x: auto; border: 1px solid #dce3ea; border-radius: 10px; background: #f9fbfd; }
+  svg { display: block; width: 100%; min-width: 660px; height: auto; color: #21354a; }
+  text { fill: #21354a; font: 16px system-ui, sans-serif; }
+  .small { font-size: 13px; } .tiny { font-size: 12px; } .label { font-weight: 600; }
+  .blue { fill: #e4effa; stroke: #8faccc; }
+  .green { fill: #e1f2e9; stroke: #85b79e; }
+  .orange { fill: #fff0db; stroke: #d6ad72; }
+  .purple { fill: #efe9fb; stroke: #b6a4d7; }
+  .panel { fill: #fff; stroke: #dce3ea; }
+  .arrow, .line, .dash { fill: none; stroke: #697b8e; stroke-width: 1.6; }
+  .dash { stroke-dasharray: 5 5; } .dot { fill: #53799c; }
+  figcaption { margin-top: 10px; font-size: .8em; line-height: 1.6; opacity: .75; }
+  .scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+</style>

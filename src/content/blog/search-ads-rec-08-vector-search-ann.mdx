@@ -1,0 +1,251 @@
+---
+title: '搜广推模型基础（八）：向量检索，从精确 Top-K 到 IVF、HNSW 与 PQ'
+description: '建立精确向量检索基准，解释 IVF 分区、HNSW 图搜索和 PQ 压缩的近似来源，并用 Faiss 检查 ID 映射、召回误差、过滤及版本一致性。'
+category: '搜广推模型'
+pubDate: '2026-11-16T08:08:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import SearchRecSeries from '../../components/SearchRecSeries.astro';
+import SearchRecDiagram from '../../components/SearchRecDiagram.astro';
+import { withBase } from '../../lib/blog';
+
+<SearchRecSeries current={8} />
+
+双塔模型已经把请求和物品转换为向量。下一步是给定请求向量，从物品库中找到得分最高的 `K` 个物品。库较小时，可以对全部向量计算分数；规模增大后，计算、内存带宽和索引维护成本会共同影响方案选择。
+
+ANN 是 Approximate Nearest Neighbor，即近似最近邻搜索。它通过只访问部分候选、压缩向量或组合多种方法降低成本，代价是可能遗漏精确检索的高分结果。本篇以精确结果为基准，逐项解释近似发生在哪里。
+
+## 1. 先固定检索问题
+
+记当前请求向量为 `u∈Rᴰ`，物品矩阵为 `V∈R^{N×D}`。最大内积检索的目标是：
+
+<Equation tex={String.raw`\operatorname{TopK}_{i\in\mathcal I(x)}\ u^\top v_i.`} />
+
+`𝓘(x)` 是当前请求允许访问的物品集合，可能包含地区、时间、权限、库存或历史过滤条件。定义精确参照时也要使用这个集合，不能将未过滤全库 Top-K 与过滤后的 ANN 结果直接比较。
+
+常用距离包括内积、余弦和平方 L2。单位向量满足 `‖u−v‖²=2−2uᵀv`，因此它们的排序对应；未归一化时不一定成立。Faiss 的 L2 索引通常返回**平方**欧氏距离，省去了开平方，但距离数值的单位也随之变化。[1]
+
+距离方向也要统一：内积越大越好，L2 越小越好。向量中若含 NaN、无穷或不符合约定的零向量，排序结果可能没有意义。索引前应核对 dtype、维度、有限值、归一化及真实 ID 映射。
+
+## 2. 精确检索：矩阵乘只是第一步
+
+一批 `B` 个请求可以用矩阵乘计算全部分数：
+
+<Equation tex={String.raw`S=UV^\top,\qquad U\in\mathbb R^{B\times D},\
+V\in\mathbb R^{N\times D},\ S\in\mathbb R^{B\times N}.`} />
+
+内积计算量约为 `2BND` FLOPs，之后还要在每一行选择 Top-K。若完整排序，成本约为 `O(N log N)`；部分选择、堆或专用 Top-K 算法可以降低选择成本。具体实现还受内存布局、硬件和 `K` 影响。
+
+FP32 物品向量需要 `4ND` 字节，完整分数矩阵需要 `4BN` 字节。教学计算：一千万个 128 维向量的原始矩阵约为 5.12 GB；批量 256 个请求的完整得分矩阵约为 10.24 GB，均为十进制 GB，尚未计入其他数据。
+
+可以把物品库分块，每块计算局部 Top-K，再与当前 Top-K 合并。这样无需保存所有分数，同时保留精确性。理由是：若一个物品不在它所在块的前 K 名，同一块已有至少 K 个物品排名更高，它就无法进入全局前 K。存在同分时，需要统一次级排序规则。
+
+精确扫描具有连续访问和大矩阵计算的优势。对于中等规模、高查询 batch 或加速器内存足够的情况，它可能具有竞争力。不能只依据 `N` 大就认定图索引一定更快，应测量真实请求形状和吞吐。
+
+## 3. 三种主要近似来源
+
+<SearchRecDiagram kind="ann" />
+
+| 方法 | 减少成本的方式 | 可能产生的误差 |
+| --- | --- | --- |
+| IVF | 先选少量分区，只扫描这些分区 | 正确近邻所在分区没有被访问 |
+| HNSW | 沿近邻图访问部分节点 | 搜索路径和宽度未覆盖正确近邻 |
+| PQ / SQ | 用紧凑编码替代原始向量 | 近似距离改变候选顺序 |
+
+这些方法可以组合。例如 IVF-PQ 同时减少访问范围和每个向量的存储，图索引也可以在特定实现中与压缩表示结合。组合后需要分别识别漏搜和距离近似的影响。
+
+## 4. IVF：把全库扫描缩小到几个分区
+
+IVF（Inverted File）先训练粗量化器，把向量分配到 `nlist` 个簇，每个簇保存一个倒排列表。查询时，先查找与请求较接近的粗中心，再扫描其中 `nprobe` 个列表。
+
+IVF 的建库过程可以分为：
+
+1. 从具有代表性的物品向量中抽取训练样本。
+2. 训练粗中心；使用的聚类及距离应与索引设计匹配。
+3. 将每个物品分配到一个列表，保存向量或压缩码及物品 ID。
+4. 查询时选择列表，计算列表内候选分数，再选 Top-K。
+
+若簇规模比较均衡，扫描数量粗略接近 `N×nprobe/nlist`，但这只是估算。真实分区可能不均衡，不同 Query 命中大簇的频率也不同，尾延迟因此可能明显高于平均值。粗中心搜索本身也有成本。
+
+`nlist` 增大通常会缩小单个列表，但需要更多训练样本，粗检索与列表管理开销也会变化。`nprobe` 增大通常访问更多候选，提高召回并增加查询成本。两者是整数参数，取值还要结合库规模、分布和索引实现选择。
+
+**IVFFlat**在列表中保留原始向量，扫描到的候选使用原始距离计算。若扫描全部列表、没有 `max_codes` 等额外访问限制，且数据和距离一致，结果应与 Flat 精确检索一致，只可能有浮点或同分排序差异。
+
+IVF-PQ 即使扫描全部列表，仍然可能有压缩距离误差，因此不能沿用上述结论。训练样本不足、物品分布变化和长期增量写入，也可能使粗分区质量下降，需要监控并适时重建。
+
+## 5. HNSW：通过分层近邻图逐步接近目标
+
+HNSW（Hierarchical Navigable Small World）把向量组织为多层近邻图。[2] 上层节点较少，适合快速移动到相关区域；下层节点更多，再进行更细致的邻域搜索。
+
+一次查询大致从顶层入口开始，沿能改进距离的边移动；到下一层继续，底层使用更宽的候选集合探索。它无需扫描整个库，但访问顺序常较分散，指针访问、缓存命中和并发方式会影响性能。
+
+主要参数包括：
+
+- `M`：控制图连接规模，具体各层连接上限依实现而异。更大的连接规模通常增加内存和构建成本，也可能改善可达性。
+- `efConstruction`：构建时的搜索候选宽度，影响连接质量及建库时间。
+- `efSearch`：查询时的探索宽度，通常越大越接近精确结果，也增加访问成本。
+
+`efSearch` 至少应满足所用实现对返回深度的要求，常见设置会使其不小于 `K`。参数与召回率没有跨数据集固定的换算关系，高维分布、簇结构、向量重复和过滤规则都会影响表现。
+
+HNSW 支持增量插入的设计适合持续加入新向量，但删除、更新、并发写入和压缩能力依具体库而异。某些实现使用删除标记，另一些索引不直接支持删除；不能把图算法的名称当成完整数据库接口承诺。
+
+图搜索在许多数据上能够以较少访问获得较高召回，但不存在对任意数据都成立的简单“查询必为 O(log N)”保证。索引质量和分布变化仍需通过精确样本检查。
+
+## 6. SQ、PQ 与 OPQ：向量怎样压缩
+
+**Scalar Quantization（SQ）**逐个维度进行量化，例如用低位整数表示原始浮点坐标。量化区间、尺度和零点决定表示误差。它通常比 FP32 紧凑，但距离需要使用对应的近似计算或解码。
+
+**Product Quantization（PQ）**把 `D` 维向量切成 `m` 个子向量，每段使用一个含 `2ᵇ` 个中心的码本，用 `b` 位中心编号表示该段。[3] 在等长切分的常见形式中，`D` 需要能被 `m` 整除。
+
+例如 `D=128、m=16、b=8`，每段有 8 个浮点坐标，每个物品的 PQ 码只需要 `16×8=128` 位，即 16 字节。原始 FP32 向量是 512 字节，单看向量载荷压缩了 32 倍。索引 ID、码本、粗中心、图边及内存管理开销不在这个比值内。
+
+对平方 L2，查询可为每个子空间预先计算查表：
+
+<Equation tex={String.raw`T_{\ell,k}=\|u^{(\ell)}-c_{\ell,k}\|_2^2,\qquad
+\|u-\widehat v_i\|_2^2
+=\sum_{\ell=1}^{m}T_{\ell,\mathrm{code}_{i,\ell}}.`} />
+
+请求向量保持浮点表示，数据库向量使用压缩码，所以常称为非对称距离计算（ADC）。之后每个候选只需要若干查表与加法。内积也可通过子空间点积查表，但不能直接套用未归一化 L2 的排序结论。
+
+IVF-PQ 常对向量相对粗中心的残差进行编码。查询计算还需考虑所属粗中心，具体公式取决于距离和实现。残差通常比原始全局分布更集中，有利于利用码本，但会增加训练及查询组织的细节。
+
+**OPQ（Optimized Product Quantization）**在 PQ 前学习一个旋转或相应线性变换，使各子空间更适合压缩。正交旋转在精确运算下保持内积与 L2 距离，但旋转后的 PQ 误差仍然存在。索引和请求必须应用同一变换。
+
+压缩误差也不只由平均重建误差决定。Top-K 边界处的物品分数可能非常接近，一点距离扰动就会交换顺序；因此应直接测量近邻召回，而不能只报告向量重建均方误差。
+
+## 7. Faiss：建立 Flat 与 IVFFlat 对照
+
+下面的例子在 CPU、Faiss 1.10.0、NumPy 1.26.4 上核对。使用归一化随机向量，仅测试 API 与检索一致性。随机数据上的 ANN 结果不能代表真实双塔向量的效果或延迟。
+
+`IndexFlatIP` 作为精确基准；`IndexIDMap2` 保存外部 ID；`IndexIVFFlat` 在自己的倒排列表中保存外部 ID。训练、插入和查询都使用连续的 FP32 数组。
+
+```python
+import numpy as np
+import faiss
+
+def normalized_f32(array):
+    result = np.array(array, dtype=np.float32, order="C", copy=True)
+    if result.ndim != 2 or not np.isfinite(result).all():
+        raise ValueError("finite 2-D vectors required")
+    if np.any(np.linalg.norm(result, axis=1) < 1e-12):
+        raise ValueError("zero vectors need an explicit fallback")
+    faiss.normalize_L2(result)
+    return result
+
+def ann_recall(found, exact):
+    if found.shape != exact.shape:
+        raise ValueError("same query count and k required")
+    k = exact.shape[1]
+    if k == 0 or (exact < 0).any():
+        raise ValueError("complete nonnegative exact IDs required")
+    return float(np.mean([
+        len(set(a[a >= 0].tolist()) & set(b.tolist())) / k
+        for a, b in zip(found, exact)
+    ]))
+
+faiss.omp_set_num_threads(1)  # 固定本例 CPU 线程设置。
+rng = np.random.default_rng(8)
+n, dim, k = 2048, 32, 10
+vectors = normalized_f32(rng.normal(size=(n, dim)))
+queries = normalized_f32(rng.normal(size=(32, dim)))
+external_ids = rng.permutation(np.arange(10000, 10000 + n)).astype(np.int64)
+
+exact = faiss.IndexIDMap2(faiss.IndexFlatIP(dim))
+exact.add_with_ids(vectors, external_ids)
+exact_scores, exact_ids = exact.search(queries, k)
+
+# 用 NumPy 全矩阵计算独立核对精确检索及 ID 映射。
+matrix = queries @ vectors.T
+order = np.argsort(-matrix, axis=1)[:, :k]
+np.testing.assert_array_equal(exact_ids, external_ids[order])
+np.testing.assert_allclose(
+    exact_scores, np.take_along_axis(matrix, order, axis=1),
+    atol=1e-6, rtol=1e-5)
+
+nlist = 32
+ivf = faiss.IndexIVFFlat(faiss.IndexFlatIP(dim), dim, nlist,
+                       faiss.METRIC_INNER_PRODUCT)
+ivf.train(vectors)                 # 真实大库使用有代表性的训练子集。
+assert ivf.is_trained
+ivf.add_with_ids(vectors, external_ids)
+ivf.nprobe = 4
+approx_scores, approx_ids = ivf.search(queries, k)
+recall = ann_recall(approx_ids, exact_ids)
+assert 0 <= recall <= 1
+
+# 只对 IVFFlat 的这个配置验证全列表扫描恢复精确结果。
+ivf.nprobe = nlist
+ivf.max_codes = 0                  # 不设置额外扫描条数上限。
+all_scores, all_ids = ivf.search(queries, k)
+np.testing.assert_array_equal(all_ids, exact_ids)
+np.testing.assert_allclose(all_scores, exact_scores, atol=1e-6, rtol=1e-5)
+assert ann_recall(all_ids, exact_ids) == 1.0
+```
+
+`search` 返回的是分数与 ID，无法补足的槽位可能出现 `-1`，不能把它当成真实物品。外部 ID 应唯一、稳定，索引位置与业务 ID 不要混用。代码使用正整数 ID 以便明确识别缺失标记。
+
+真实数据中若存在相同向量或分数并列，多个 Top-K 集合可能同样正确。比较时可以制定 ID 次级排序或距离容差。这里的随机连续数据主要用于避开并列，并检查 NumPy 与 Faiss 的结果是否一致。
+
+## 8. 精确重算能修复哪些问题
+
+一种常见流程是 ANN 先取 `K′` 个候选，再读取它们的原始向量精确打分，最后取 `K`，其中 `K′≥K`。这样可以修复候选内部由 PQ 等压缩引入的排序误差。
+
+若某个正确物品没有进入前面的候选集合，后续精确重算无法找回它。对于任何目标相关集合 `R` 和召回集合 `C`，最终结果 `L⊆C` 都满足：
+
+<Equation tex={String.raw`|L\cap R|\le |C\cap R|.`} />
+
+因此应分别查看候选阶段的覆盖、候选内距离误差和最终排序。重算还需要保存或获取原始向量，可能增加存储、随机读取和网络开销。报告“PQ 节省了多少内存”时，要明确是否另外保留了原始向量副本。
+
+多路召回也需要类似分析：词项、双塔、热门和规则候选合并后，去重与配额会改变最终覆盖。某一路单独召回率更高，不一定意味着合并后新增的相关候选更多，可以统计独有命中和边际贡献。
+
+## 9. 过滤、分片与更新怎样影响结果
+
+**过滤。** 先取全库 Top-K 再删除不可用物品，可能得到不足 K 个结果，也可能漏掉本应进入可用集合 Top-K 的物品。扩大初始检索深度可以缓解，但没有对任意选择性都成立的固定倍数。预过滤、搜索中应用选择器或分区索引，需要根据过滤频率与库实现选择。
+
+**图遍历。** 某些节点不允许作为返回结果，但仍可能帮助搜索路径连通。是否允许遍历不可返回节点、如何处理权限与元数据，属于具体索引和服务设计，必须与可用集合定义一致。
+
+**分片。** 在各分片进行精确检索、使用相同分数并各返回 K 个结果后，合并可以得到全局精确 Top-K；局部近似搜索则可能在合并前已经遗漏候选。分片过滤、向量版本和距离尺度不一致时，全局合并也会失去可比性。
+
+**更新。** 新向量加入只解决新物品可检索，旧向量仍可能因模型或内容变化过期。物品删除、更新及外部 ID 复用应有明确规则。持续增量写入还会改变 IVF 分区分布和图结构，不能长期只看查询成功率。
+
+模型、词表、归一化、OPQ 变换、PQ 码本、粗中心和向量库应具有可追踪的版本关系。切换请求塔时，需要保证服务中的物品空间兼容。恢复旧模型时，也要能恢复匹配的索引和特征配置。
+
+## 10. 怎样测量质量、延迟与内存
+
+质量评价分为两层：
+
+- **ANN Recall@K**：与同一模型、同一距离、同一可用集合的精确 Top-K 比较，回答近似损失。
+- **任务 Recall@K / NDCG**：与留出交互或相关性标注比较，回答模型及完整检索链路的质量。
+
+ANN 召回很高而任务召回很低时，应检查模型、样本和任务定义；精确结果较好而 ANN 明显下降时，再定位搜索宽度、压缩和过滤。短期日志标签也不能直接覆盖所有长期效用。
+
+性能实验应明确以下口径：
+
+| 阶段 | 需要记录的内容 |
+| --- | --- |
+| 训练与建库 | 训练样本数、聚类/PQ 训练时间、插入时间、峰值内存 |
+| 物品编码 | 模型版本、设备、批大小、全量或增量耗时 |
+| 查询 | 请求批大小、并发、线程数、预热、P50/P95/P99、吞吐 |
+| 全链路 | 特征获取、请求塔、索引、过滤、重算与合并的分段耗时 |
+| 内存与存储 | 序列化索引大小、进程常驻内存、原始向量副本、峰值 |
+| 更新 | 新增/删除速率、可见性延迟、重建成本及查询扰动 |
+
+单次查询 `batch=1` 与批量查询的平均每条耗时不同。预先编码 Query 的实验只测索引，不能当成端到端模型服务延迟。GPU 计时要处理异步执行和同步点；CPU 则要固定线程及并发条件。
+
+尾延迟需要足够多请求，少量样本的 P99 很不稳定。基准还应覆盖不同过滤选择性、热门 Query、冷缓存及真实向量分布。随机向量适合检查接口，无法替代模型产生的向量分布。
+
+## 11. 按约束选择起点
+
+先建立 Flat 精确基准，确认距离、ID 和任务指标。内存允许时，可比较 IVFFlat 与 HNSW 的质量—延迟关系；存储容量或带宽成为主要约束时，再加入 SQ/PQ，并检查是否需要精确重算。
+
+IVF 更直接地暴露“访问多少分区”的控制量，HNSW 暴露图探索宽度，PQ 暴露编码容量与量化误差。选择应来自同一数据上的指标曲线，以及构建、更新和运维条件。不存在仅凭算法名称就能确定的最佳组合。
+
+至此，样本、评价、特征、LR/FM、双塔、负采样和向量检索形成了一条可执行的基础链路。进一步学习协同过滤、深层排序、序列模型和多任务时，可以继续沿用这些数据与评价约定，明确每项结构改变了哪一段计算及误差。也可以回到<a href={withBase('blog/search-ads-rec-01-system-overview/')}>系统链路篇</a>，把候选检索放回完整请求流程中理解。
+
+## 参考资料
+
+1. Douze et al. [The Faiss library](https://arxiv.org/abs/2401.08281)，2024，本文参考 2025 年修订版本。索引、压缩、距离和实现取舍。
+2. Malkov and Yashunin. [Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs](https://arxiv.org/abs/1603.09320)，2016 预印本。HNSW 的图构建与分层搜索。
+3. Jégou, Douze and Schmid. [Product Quantization for Nearest Neighbor Search](https://doi.org/10.1109/TPAMI.2010.57)，IEEE TPAMI 2011。PQ 与非对称距离计算。
+4. Ge et al. [Optimized Product Quantization for Approximate Nearest Neighbor Search](https://openaccess.thecvf.com/content_cvpr_2013/html/Ge_Optimized_Product_Quantization_2013_CVPR_paper.html)，CVPR 2013。改进子空间划分与量化。

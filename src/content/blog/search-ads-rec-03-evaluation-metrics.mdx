@@ -1,0 +1,278 @@
+---
+title: '搜广推模型基础（三）：LogLoss、AUC、GAUC、Recall 与 NDCG'
+description: '从概率预测、请求内排序和候选检索三个角度推导评价指标，讲清分组、采样、空集合、校准与 ANN 召回率，并给出可运行的指标实现。'
+category: '搜广推模型'
+pubDate: '2026-11-16T08:03:00+08:00'
+---
+
+import Equation from '../../components/Equation.astro';
+import SearchRecSeries from '../../components/SearchRecSeries.astro';
+import SearchRecDiagram from '../../components/SearchRecDiagram.astro';
+import { withBase } from '../../lib/blog';
+
+<SearchRecSeries current={3} />
+
+评价之前，先写清模型输出和使用场景。一个值为 0.1 的输出，可能是预测点击概率，也可能只是向量内积。概率预测需要关心数值是否可信，排序需要关心候选之间的顺序，召回需要关心相关结果是否进入集合。把这些问题分开，才能解释“某项指标提高，但系统收益没有变化”的原因。
+
+本篇统一以 `N` 表示评价样本数、`K` 表示截断位置。所有手算例子都是教学构造，代码用于核对指标定义。
+
+<SearchRecDiagram kind="metrics" />
+
+## 1. LogLoss：预测概率为真实标签付出多少代价
+
+二分类标签 `y∈{0,1}`、预测概率 `p∈(0,1)` 的对数损失为：
+
+<Equation tex={String.raw`\ell(y,p)=-y\log p-(1-y)\log(1-p),\qquad \mathrm{LogLoss}=\frac1N\sum_{n=1}^{N}\ell(y_n,p_n).`} />
+
+真实标签为 1 时，预测 0.8 的损失约为 0.223，预测 0.01 的损失约为 4.605。对真实正例给出接近零的概率会受到很大惩罚，负例则对称。这里使用自然对数。
+
+若模型直接产生 logit `z`，令 `p=σ(z)`，可以使用稳定形式：
+
+<Equation tex={String.raw`\ell(y,z)=\max(z,0)-yz+\log(1+\exp(-|z|)).`} />
+
+这样避免先算 sigmoid 后再对极端概率取对数。PyTorch 的 `binary_cross_entropy_with_logits` 将这两步合并。[2] 评价只拿到概率时，可以裁剪到 `[ε,1−ε]`；裁剪阈值也会影响极端预测的损失，应保持一致。
+
+对于给定输入，真实正例概率为 `η`，期望损失为 `−η log p−(1−η)log(1−p)`。对 `p` 求导并令其为零可得最优点 `p=η`。这说明在分布和权重正确、模型可表达且优化充分的条件下，LogLoss 鼓励学习概率。
+
+### 加权损失的含义
+
+逆采样概率权重可用于恢复目标分布，业务成本权重则主动改变优化目标。二者不能只因都叫 `weight` 就混用。若正例额外乘以 `a`、负例乘以 `b`，条件最优输出为：
+
+<Equation tex={String.raw`p^*(x)=\frac{a\eta(x)}{a\eta(x)+b(1-\eta(x))}.`} />
+
+因此，使用正例放大权重后，原始 sigmoid 值一般不再直接等于曝光点击率。报告加权指标时，也要说明是按样本数还是按权重和归一化。
+
+## 2. AUC：正例排在负例前面的概率
+
+ROC 曲线把分类阈值从高到低移动，观察真正例率和假正例率。ROC-AUC 还可以解释为：随机抽一个正例和一个负例，正例得分更高的概率；同分记半分。
+
+给定阈值，真正例率 `TPR=TP/(TP+FN)` 表示找回多少正例，假正例率 `FPR=FP/(FP+TN)` 表示多少负例被误判为正例。这里 TP、FP、TN、FN 分别表示真正、假正、真负和假负的样本数。ROC 描述所有阈值下的变化，AUC 汇总曲线下的面积。
+
+<Equation tex={String.raw`\mathrm{AUC}=\frac{\sum_{i:y_i=1}\sum_{j:y_j=0}\left[\mathbf 1(s_i>s_j)+\tfrac12\mathbf 1(s_i=s_j)\right]}{N_+N_-}.`} />
+
+例如标签为 `[0,0,1,1]`、得分为 `[0.1,0.4,0.35,0.8]`。四个正负配对中，0.35 赢过 0.1，0.8 赢过两个负例，共赢三次，AUC 为 0.75。
+
+AUC 只依赖相对顺序。对全部得分施加严格递增变换，AUC 不变；概率校准可能大幅改变。它也不直接关注前几个位置：交换列表顶部的两个关键结果，对所有正负配对的影响可能很小。
+
+当一个评价集合只有正例或只有负例时，分母为零，AUC 没有定义。把这类集合自动记为 0.5 会引入额外约定，并改变汇总含义。下面的代码明确拒绝单类集合。
+
+### O(N log N) 的实现
+
+先按分数从低到高排序，同分样本一起处理。每个正例赢过所有已经遇到的负例，同分负例按一半计入。
+
+```python
+import math
+from collections import defaultdict
+
+def binary_auc(labels, scores):
+    if len(labels) != len(scores) or not labels:
+        raise ValueError("nonempty aligned inputs required")
+    if any(y not in (0, 1) for y in labels):
+        raise ValueError("binary labels required")
+    if any(not math.isfinite(float(s)) for s in scores):
+        raise ValueError("finite scores required")
+    positives = sum(labels)
+    negatives = len(labels) - positives
+    if positives == 0 or negatives == 0:
+        raise ValueError("AUC needs both classes")
+    pairs = sorted(zip(scores, labels))
+    wins, lower_negatives, left = 0.0, 0, 0
+    while left < len(pairs):
+        right = left
+        p = n = 0
+        while right < len(pairs) and pairs[right][0] == pairs[left][0]:
+            p += pairs[right][1]
+            n += 1 - pairs[right][1]
+            right += 1
+        wins += p * lower_negatives + 0.5 * p * n
+        lower_negatives += n
+        left = right
+    return wins / (positives * negatives)
+
+def grouped_auc(labels, scores, groups, weighting="impressions"):
+    if not (len(labels) == len(scores) == len(groups)) or not labels:
+        raise ValueError("nonempty aligned inputs required")
+    if weighting not in ("impressions", "equal", "pairs"):
+        raise ValueError("unknown weighting")
+    buckets = defaultdict(list)
+    for y, s, group in zip(labels, scores, groups):
+        buckets[group].append((y, s))
+    total, mass, covered, valid = 0.0, 0, 0, 0
+    for rows in buckets.values():
+        ys, ss = map(list, zip(*rows))
+        p, n = sum(ys), len(ys) - sum(ys)
+        if p == 0 or n == 0:
+            continue
+        weight = {"impressions": len(rows), "equal": 1, "pairs": p*n}[weighting]
+        total += weight * binary_auc(ys, ss)
+        mass += weight
+        covered += len(rows)
+        valid += 1
+    return {
+        "gauc": total / mass if mass else None,
+        "valid_groups": valid,
+        "group_coverage": valid / len(buckets),
+        "sample_coverage": covered / len(labels),
+    }
+
+assert binary_auc([0, 0, 1, 1], [0.1, 0.4, 0.35, 0.8]) == 0.75
+assert binary_auc([0, 1], [0.2, 0.2]) == 0.5
+report = grouped_auc([0, 1, 1], [0.1, 0.9, 0.3], ["a", "a", "b"])
+assert report["gauc"] == 1.0 and report["valid_groups"] == 1
+assert report["sample_coverage"] == 2 / 3
+```
+
+排序成本为 `O(N log N)`，遍历同分段的成本为 `O(N)`。大数据可以按分桶近似计算 AUC，但桶宽和截断会引入误差；比较模型时应固定算法。
+
+## 3. GAUC：把比较限制在合理的组内
+
+全局 AUC 会比较不同用户或不同请求之间的正负例。若用户 A 整体点击倾向高，用户 B 整体点击倾向低，模型可能仅靠用户基线差异就得到较高全局 AUC，而请求内排序没有改善。
+
+GAUC 先计算每组 AUC，再加权平均：
+
+<Equation tex={String.raw`\mathrm{GAUC}=\frac{\sum_{g\in G_{\mathrm{valid}}}w_g\,\mathrm{AUC}_g}{\sum_{g\in G_{\mathrm{valid}}}w_g}.`} />
+
+组可以是用户、查询或请求。按用户分组仍会混合该用户不同时间的请求；按查询文本分组可能混合不同用户意图；按 request_id 分组更贴近单次展示，但往往出现很多无点击或单候选组。
+
+`w_g` 也有多种选择：按曝光数加权更重视大组，等权更接近平均组体验，按 `N₊N₋` 加权则对应汇总所有有效组内正负配对的胜率。“GAUC”这个名字本身不包含唯一分组和权重定义，必须在报告中写明。
+
+跳过单类组后，还应报告有效组占比和样本覆盖率。若一个模型只在少量活跃用户上有可计算组，单独展示 GAUC 会掩盖评价覆盖不足。
+
+### 一个全局 AUC 为 0.81、GAUC 为零的例子
+
+设两个用户各有十条曝光，模型分数如下：
+
+| 用户 | 正例及其得分 | 负例及其得分 | 用户内 AUC |
+| --- | --- | --- | --- |
+| A | 9 条，均为 0.8 | 1 条，为 0.9 | 0 |
+| B | 1 条，为 0.1 | 9 条，均为 0.2 | 0 |
+
+每个用户的正例都低于自己的负例，因此任何正权重汇总的用户 GAUC 都为零。全局一共有 10 个正例、10 个负例；A 的 9 个正例却能赢过 B 的 9 个负例，共产生 81 个胜出配对，全局 AUC 为 0.81。
+
+这个例子说明，跨用户基线差异可以掩盖用户内排序错误。反过来，GAUC 忽略了跨组分数尺度，因此也无法检查不同用户的概率是否可比。选择指标应跟随模型的使用方式：请求内排序、跨请求预算分配和概率预测需要不同证据。
+
+## 4. Top-K 指标：列表前部有哪些相关结果
+
+对于请求 `q`，令 `R_q` 为相关物品集合，`L_q^K` 为去重后的前 `K` 个结果。
+
+<Equation tex={String.raw`\mathrm{Precision@K}=\frac{|L_q^K\cap R_q|}{K},\qquad \mathrm{Recall@K}=\frac{|L_q^K\cap R_q|}{|R_q|}.`} />
+
+Precision 衡量展示位置中有多少相关结果，Recall 衡量已知相关集合被覆盖多少。若系统允许少于 `K` 个返回结果，Precision 的分母取固定 `K` 还是实际返回数，应提前约定。固定 `K` 会把未填满的位置视为没有命中。
+
+**Hit@K**只检查至少命中一个相关结果。**MRR@K**取首个相关结果排名的倒数，未命中记零。每个请求只有一个留出正例时，Hit@K 和该请求的 Recall@K 数值相同；多个正例时，两者关注点明显不同。
+
+**AP@K**综合每次命中之前的精度。本文采用：
+
+<Equation tex={String.raw`\mathrm{AP@K}=\frac{\sum_{r=1}^{K}\mathrm{Precision@r}\cdot\mathrm{rel}_r}{\min(|R_q|,K)}.`} />
+
+也有实现使用 `|R_q|` 作为分母，尤其在截断评价中两者可能不同。跨项目比较 MAP 时，应先对齐 AP 定义，再取请求平均。
+
+只从未交互物品中随机抽取少量候选进行评价，通常比全库检索容易。结果只能描述这个采样候选集上的区分能力。负例数量、抽样分布、是否包含难负例及热门物品，都可能改变 Recall、MRR 和 NDCG。
+
+## 5. NDCG：同时考虑相关程度与位置
+
+相关性可以是多级标签，例如 `0、1、2、3`。本文采用指数增益 `2^rel−1` 和以 2 为底的位置折扣：
+
+<Equation tex={String.raw`\mathrm{DCG@K}=\sum_{r=1}^{K}\frac{2^{\mathrm{rel}_r}-1}{\log_2(r+1)},\qquad \mathrm{NDCG@K}=\frac{\mathrm{DCG@K}}{\mathrm{IDCG@K}}.`} />
+
+IDCG 是将该评价集合中的相关性按从高到低排列后的理想 DCG。若用不同候选池计算 IDCG，就改变了归一化基准。评价召回后排序时，要说明理想列表来自完整标注集合，还是仅来自当前候选集合。
+
+手算例子：三个结果的等级为 `[3,0,2]`，DCG@3 为 `7+0+3/2=8.5`；理想顺序为 `[3,2,0]`，IDCG 为 `7+3/log₂3≈8.893`，所以 NDCG 约为 0.956。
+
+有些库直接把输入相关性当成增益。scikit-learn 的 `ndcg_score` 使用输入值作为增益；若要复现本文指数增益，应先把标签变换为 `2^rel−1`。[1] 同分排名的处理也要对齐：可以平均同分排列的贡献，或按确定性次级键排序，二者结果可能不同。
+
+下面给出固定列表顺序的计算，默认未出现在相关性字典中的物品增益为零。这是一项显式评价约定，不能据此推断未标注物品真实不相关。
+
+```python
+import math
+
+def ranking_metrics(ranked_ids, relevance, k):
+    if k <= 0 or any(v < 0 for v in relevance.values()):
+        raise ValueError("positive k and nonnegative relevance required")
+    if len(set(ranked_ids)) != len(ranked_ids):
+        raise ValueError("duplicate recommendations")
+    relevant = {item for item, grade in relevance.items() if grade > 0}
+    if not relevant:
+        return None  # 汇总时跳过，并另外报告无相关标注的请求数。
+    hits, ap_sum, reciprocal = 0, 0.0, 0.0
+    dcg = 0.0
+    for rank, item in enumerate(ranked_ids[:k], 1):
+        grade = relevance.get(item, 0)
+        if grade > 0:
+            hits += 1
+            ap_sum += hits / rank
+            if reciprocal == 0:
+                reciprocal = 1 / rank
+        dcg += (2**grade - 1) / math.log2(rank + 1)
+    ideal = sorted(relevance.values(), reverse=True)[:k]
+    idcg = sum((2**g - 1) / math.log2(r + 1)
+               for r, g in enumerate(ideal, 1))
+    return {
+        "precision": hits / k,
+        "recall": hits / len(relevant),
+        "hit": float(hits > 0),
+        "mrr": reciprocal,
+        "ap": ap_sum / min(k, len(relevant)),
+        "ndcg": dcg / idcg,
+    }
+
+m = ranking_metrics(["a", "b", "c"], {"a": 3, "b": 0, "c": 2}, 3)
+assert m["recall"] == 1 and m["precision"] == 2 / 3
+assert abs(m["ap"] - 5 / 6) < 1e-12
+assert abs(m["ndcg"] - 8.5 / (7 + 3 / math.log2(3))) < 1e-12
+assert ranking_metrics(["x"], {"x": 0}, 3) is None
+```
+
+## 6. 模型召回率与 ANN 召回率
+
+双塔模型通过相似度检索物品。这里至少有两个不同的 Recall@K：
+
+- **任务召回率**：返回结果与真实相关集合或留出正例的重合程度，评价表示模型与整体候选选择。
+- **ANN 召回率**：近似索引返回结果与同一模型、同一距离函数、同一可用集合上的精确 Top-K 的重合程度，评价索引近似误差。
+
+<Equation tex={String.raw`\mathrm{ANNRecall@K}(q)=\frac{|\operatorname{ANN}_K(q)\cap\operatorname{Exact}_K(q)|}{K}.`} />
+
+一个索引可以完美复现精确结果，但模型的精确结果本身与用户需求不匹配。也可能模型很好，索引遗漏了大量高分结果。需要同时测两类召回率，并保留精确检索作为诊断基线。
+
+当可用库小于 `K` 时，应明确实际比较深度；距离并列也可能导致多个同样正确的 Top-K 集合，可使用稳定 ID 次级排序或距离容差。过滤条件、向量归一化和物品版本必须一致，否则差异混合了索引之外的因素。
+
+## 7. 校准、阈值与类别不均衡
+
+若一组样本的平均预测点击率为 0.02，实际点击率也接近 0.02，就说明该区间具有较好的校准。可将预测分桶，对比每桶平均预测与真实频率，绘制可靠性曲线。
+
+**Brier score**是概率与标签的均方误差：
+
+<Equation tex={String.raw`\mathrm{Brier}=\frac1N\sum_n(p_n-y_n)^2.`} />
+
+它同时受校准和区分能力影响，不能简单当成“纯校准误差”。**ECE**按分桶样本占比汇总预测均值与标签均值之差的绝对值，容易理解，但受桶数、等宽或等频方式和样本量影响；不同切片中的相反误差还可能在总体上抵消。
+
+设非空预测桶为 `B₁…B_M`，桶内平均概率为 `p̄_m`、正例比例为 `ȳ_m`，常见二分类 ECE 定义是：
+
+<Equation tex={String.raw`\mathrm{ECE}=\sum_{m=1}^{M}\frac{|B_m|}{N}
+\left|\overline p_m-\overline y_m\right|.`} />
+
+绘制可靠性曲线时，应同时展示每桶样本量。某个桶只有几个样本，即使预测与观测差距很大，也不足以支持稳定的分布结论。按设备、场景或用户活跃度切片，可以发现总体均值掩盖的偏差。
+
+教学例子：标签为 `[1,0]`，模型 A 输出 `[0.8,0.2]`，模型 B 输出 `[0.99,0.98]`。两者都把正例排在负例前，AUC 都为 1；A 的平均 LogLoss 约为 0.223，B 约为 1.961。B 对负例给出很高的正例概率，因此概率损失明显更差。两条样本只能展示指标定义，不能据此判断真实模型的校准水平。
+
+概率校准器应在独立验证数据上拟合，再到测试集评价。广告预期价值、容量预测和阈值决策通常更依赖概率数值，因此除了 AUC，还需要看 LogLoss 和分层校准。
+
+当正例很少时，全部预测为零也能得到很高准确率。Precision—Recall 曲线更直接展示“选出的结果有多纯”和“覆盖多少正例”。PR-AUC 或 Average Precision 仍受正例比例和实现定义影响，比较时应固定测试分布。
+
+阈值选择对应一项具体决策。误报与漏报成本、可处理容量和收益可以决定阈值；0.5 只是某些假设下的选择，不能直接从 sigmoid 的形式推出它总是合理。
+
+## 8. 怎样让指标差异具有可信解释
+
+先固定评测数据、候选集、标签窗口、分组、去重和缺失处理，再比较模型。概率指标通常在曝光样本层面汇总，排序指标通常先按请求算再平均；两种加权方式对高活跃用户的影响不同。
+
+同一用户的多次行为通常相关。用逐样本独立假设估计置信区间，可能低估不确定性。可以在合理的独立单元上做成组 bootstrap，例如按用户重采样，并在相同重采样组上计算两个模型的差值。存在明显时间趋势时，还需考虑时间块和评测窗口。
+
+离线收益来自固定日志，其中记录的是用户对旧策略的反馈。位置偏差、策略选择和反馈循环会限制外推；在线 A/B 实验通过分流观察新策略的行为变化，还应监测时延、错误率及体验护栏。两类证据回答不同层次的问题。
+
+建议每次保存：指标定义、数据与模型版本、样本或请求数、有效组覆盖率、候选规模、分层结果及不确定性。后续<a href={withBase('blog/search-ads-rec-04-features-embeddings/')}>特征与 Embedding</a>篇会把这些样本转换为模型可计算的张量。
+
+## 参考资料
+
+1. scikit-learn. [Model evaluation](https://scikit-learn.org/stable/modules/model_evaluation.html)、[ndcg_score](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.ndcg_score.html)。指标定义、接口和同分处理。
+2. PyTorch. [BCEWithLogitsLoss](https://docs.pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html)。数值稳定实现与权重语义。
+3. Joachims et al. [Unbiased Learning-to-Rank with Biased Feedback](https://dl.acm.org/doi/10.1145/3018661.3018699), 2017。日志评价与反馈偏差的理论背景。

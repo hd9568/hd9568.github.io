@@ -1,0 +1,39 @@
+---
+import { postUrl } from '../lib/blog';
+
+interface Props { current: number }
+const { current } = Astro.props;
+const articles = [
+  ['system-overview', '任务与系统链路'],
+  ['training-samples', '日志与训练样本'],
+  ['evaluation-metrics', '指标与评价'],
+  ['features-embeddings', '特征与 Embedding'],
+  ['logistic-regression-fm', 'LR 与 FM'],
+  ['two-tower-retrieval', '双塔召回'],
+  ['negative-sampling', '负样本与采样修正'],
+  ['vector-search-ann', '向量检索与 ANN'],
+];
+---
+<nav class="series" aria-label="搜广推模型基础系列">
+  <p class="series-title">搜广推模型基础 · {current} / 8</p>
+  <ol>
+    {articles.map(([slug, title], index) => (
+      <li>
+        <a href={postUrl(`search-ads-rec-${String(index + 1).padStart(2, '0')}-${slug}`)}
+          aria-current={index + 1 === current ? 'page' : undefined}>
+          <span>{String(index + 1).padStart(2, '0')}</span>{title}
+        </a>
+      </li>
+    ))}
+  </ol>
+</nav>
+<style>
+  .series { margin: 24px 0 32px; padding: 18px 20px; border: 1px solid var(--line, #ddd); border-radius: 8px; }
+  .series-title { margin: 0 0 10px; font-size: .86em; font-weight: 700; }
+  ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 20px; list-style: none; padding: 0; margin: 0; }
+  li { margin: 0; font-size: .84em; }
+  a { display: flex; gap: 10px; text-decoration: none; }
+  a span { opacity: .6; font-variant-numeric: tabular-nums; }
+  a[aria-current="page"] { font-weight: 700; }
+  @media (max-width: 480px) { ol { grid-template-columns: 1fr; } }
+</style>
