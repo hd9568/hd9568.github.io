@@ -1,7 +1,7 @@
 ---
 title: 'vLLM 请求调度源码解析：从 Waiting Queue 到模型执行'
 description: '沿 vLLM V1 的真实调用链，讲解 Request 状态、统一 Token 调度、Running/Waiting 队列、Prefix Cache、KV Block 分配、抢占、SchedulerOutput 和输出回写。'
-category: '推理优化'
+category: '源码学习'
 pubDate: '2026-07-28T14:02:00+08:00'
 updatedDate: '2026-07-28T14:02:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

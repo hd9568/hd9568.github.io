@@ -13,7 +13,9 @@ const topics = [
   { name: 'CUDA', slug: 'cuda', label: 'GPU COMPUTING', symbol: '▦', description: '走近 GPU 架构，从访存优化到高性能算子。' },
   { name: '推理优化', slug: 'inference', label: 'INFERENCE', symbol: '↗', description: 'Attention、KV Cache 与推理框架的实现细节。' },
   { name: '分布式训练', slug: 'training', label: 'DISTRIBUTED TRAINING', symbol: '⋈', description: '从并行策略到通信优化，理解大规模训练。' },
-  { name: 'Research & Work', slug: 'research', label: 'RESEARCH', symbol: '⌘', description: '论文精读、源码分析与工程实践记录。' },
+  { name: '论文阅读', slug: 'papers', label: 'PAPER READING', symbol: '▤', description: '论文精读与研究综述，梳理方法、实验和结论边界。' },
+  { name: '工程实现', slug: 'engineering', label: 'ENGINEERING', symbol: '⌘', description: '系统设计、算子实现与框架使用，连接原理和工程实践。' },
+  { name: '源码学习', slug: 'source', label: 'SOURCE CODE', symbol: '{ }', description: '沿开源项目的调用链，理解模块组织与关键实现。' },
 ];
 
 export function topicFor(name = '未分类') {

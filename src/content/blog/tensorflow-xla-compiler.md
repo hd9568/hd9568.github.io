@@ -1,7 +1,7 @@
 ---
 title: 'TensorFlow XLA 详解：从计算图、HLO 到 GPU Kernel 融合'
 description: '系统讲解 TensorFlow XLA 的 JIT 编译流程、HLO IR、算子融合、内存规划、tf.function 与 jit_compile、动态 Shape、编译缓存、分布式训练及性能分析。'
-category: 'Research & Work'
+category: '工程实现'
 pubDate: '2026-07-20T12:32:00+08:00'
 updatedDate: '2026-07-20T12:32:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

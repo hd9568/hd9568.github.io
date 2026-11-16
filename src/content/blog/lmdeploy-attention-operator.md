@@ -1,7 +1,7 @@
 ---
 title: 'LMDeploy Attention 算子源码详解：FA3、Triton Paged Attention 与 TurboMind'
 description: '沿 LMDeploy PyTorch Engine 和 TurboMind 两条实现链，讲解 Paged KV 写入、Prefill FlashAttention、Decode Split-K、在线 Softmax、FA3、量化缓存及 Blackwell 上的实际架构选择。'
-category: 'Research & Work'
+category: '源码学习'
 pubDate: '2026-07-29T12:56:00+08:00'
 updatedDate: '2026-07-29T12:56:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

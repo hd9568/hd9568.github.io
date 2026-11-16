@@ -1,7 +1,7 @@
 ---
 title: 'Ampere、Hopper 与 Blackwell 算子开发差异：从 mma.sync 到 WGMMA 与 tcgen05'
 description: '从 CUDA 算子和大模型训推优化视角，对比 Ampere、Hopper、Blackwell SM100 的 MMA、数据搬运、片上存储、Warp Specialization、CTA Cluster、低精度训练以及 GEMM、Attention、MoE 的实现差异。'
-category: 'Research & Work'
+category: 'CUDA'
 pubDate: '2026-07-30T10:14:00+08:00'
 updatedDate: '2026-07-30T10:14:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

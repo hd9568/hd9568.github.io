@@ -1,7 +1,7 @@
 ---
 title: 'TensorRT-LLM FMHA 源码详解：Blackwell TRTLLM-Gen、TMEM 与 Paged KV'
 description: '沿 TensorRT-LLM Blackwell Attention 调用链，讲解 TRTLLM-Gen 的 QKV 预处理、Paged KV、在线 Softmax、TMA/TMEM、Persistent Scheduler、Multi-CTA KV、低精度和安全回退。'
-category: 'Research & Work'
+category: '源码学习'
 pubDate: '2026-07-13T16:55:00+08:00'
 updatedDate: '2026-07-29T12:55:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

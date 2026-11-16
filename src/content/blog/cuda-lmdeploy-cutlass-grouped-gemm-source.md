@@ -1,7 +1,7 @@
 ---
 title: 'LMDeploy Grouped GEMM 源码详解：从 C++ 调度到 CUTLASS WGMMA'
 description: '沿 LMDeploy TurboMind 的 MoE FP8 Grouped GEMM 调用链，从 offsets、C++ 模板和运行时选核讲到 Persistent Scheduler、动态 TMA 描述符、CUTLASS Pipeline、Hopper WGMMA 与 Epilogue。'
-category: 'CUDA'
+category: '源码学习'
 pubDate: '2026-09-09T10:00:00+08:00'
 updatedDate: '2026-09-09T10:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

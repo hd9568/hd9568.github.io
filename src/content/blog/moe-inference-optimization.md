@@ -1,7 +1,7 @@
 ---
 title: 'MoE 推理优化：从 Router、Expert Dispatch 到 TensorRT-LLM FusedMoE'
 description: '系统讲解大模型 MoE 推理中的路由、token 重排、专家计算、combine、负载均衡、Expert Parallel 和 fused MoE kernel，并结合 TensorRT-LLM 源码说明工程实现。'
-category: 'Research & Work'
+category: '工程实现'
 pubDate: '2026-07-13T16:53:00+08:00'
 updatedDate: '2026-07-13T16:53:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

@@ -1,7 +1,7 @@
 ---
 title: 'DTC-SpMM 论文精读：用 Tensor Core 加速通用稀疏矩阵乘法'
 description: '深入讲解 ASPLOS 2024 DTC-SpMM 论文，从性能缺口、ME-TCF 格式、TCA 重排序、PTX 运行时 kernel、负载均衡到官方源码实现逐层拆解。'
-category: 'Research & Work'
+category: '论文阅读'
 pubDate: '2026-07-02T11:45:00+08:00'
 updatedDate: '2026-07-02T11:45:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

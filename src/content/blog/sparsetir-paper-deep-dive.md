@@ -1,7 +1,7 @@
 ---
 title: 'SparseTIR 论文精读：面向深度学习稀疏编译的可组合抽象'
 description: '深入讲解 ASPLOS 2023 SparseTIR 论文，从可组合格式、可组合变换、三阶段 IR、格式分解、lowering pass、实验结果到 TVM 源码实现逐层拆解。'
-category: 'Research & Work'
+category: '论文阅读'
 pubDate: '2026-07-03T18:27:00+08:00'
 updatedDate: '2026-07-03T18:27:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

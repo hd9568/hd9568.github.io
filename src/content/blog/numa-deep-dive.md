@@ -1,7 +1,7 @@
 ---
 title: 'NUMA 详解：CPU、内存、GPU 与网卡拓扑为什么会影响性能'
 description: '面向 AI Infra 和高性能计算场景，系统讲解 NUMA 的硬件背景、本地/远端内存访问、CPU/GPU/NIC 亲和性、性能问题与排查思路。'
-category: 'Research & Work'
+category: '操作系统与多线程'
 pubDate: '2026-07-09T10:55:00+08:00'
 updatedDate: '2026-07-09T10:55:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

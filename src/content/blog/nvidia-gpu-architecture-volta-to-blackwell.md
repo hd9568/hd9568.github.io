@@ -1,7 +1,7 @@
 ---
 title: 'NVIDIA GPU 架构中文梳理：From Volta to Blackwell'
 description: '面向 AI Infra 和高性能计算场景，系统梳理 NVIDIA 从 Volta、Turing、Ampere、Ada、Hopper 到 Blackwell 的架构演进、代表 GPU、关键差异和代码示例。'
-category: 'Research & Work'
+category: 'CUDA'
 pubDate: '2026-07-09T11:12:00+08:00'
 updatedDate: '2026-07-09T11:12:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

@@ -1,7 +1,7 @@
 ---
 title: 'Grouped GEMM 算子介绍：为什么 MoE 和不规则 batch 需要它'
 description: '系统讲解 GEMM、Batched GEMM、Grouped GEMM 的区别，结合 MoE expert 计算说明 grouped GEMM 的形状组织、指针数组、调度收益，并参考 TensorRT-LLM 源码介绍工程实现。'
-category: 'Research & Work'
+category: '工程实现'
 pubDate: '2026-07-13T16:54:00+08:00'
 updatedDate: '2026-07-13T16:54:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

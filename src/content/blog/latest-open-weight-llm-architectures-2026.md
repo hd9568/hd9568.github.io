@@ -1,7 +1,7 @@
 ---
 title: '2026 开放权重大模型架构全景：从 Gated DeltaNet、CSA/HCA 到 LatentMoE'
 description: '基于官方模型卡、配置文件与技术报告，系统拆解 Qwen3.6、DeepSeek-V4、GLM-5.2、Kimi-K2.7、MiniMax-M2.7、Nemotron 3 Ultra、Gemma 4、Mistral Small 4、Llama 4、gpt-oss、Falcon-H1R 与 RWKV-7 的架构创新及推理代价。'
-category: 'Research & Work'
+category: '论文阅读'
 pubDate: '2026-07-30T16:40:14+08:00'
 updatedDate: '2026-07-30T16:40:14+08:00'
 ---

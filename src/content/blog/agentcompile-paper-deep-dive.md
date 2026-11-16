@@ -1,7 +1,7 @@
 ---
 title: 'AgentCompile 论文精读：用 LLM 生成并验证 CUDA 推理内核'
 description: '按论文脉络系统讲解 AgentCompile：两级 LLM 编译流程、图区域分析、受约束 CUDA 生成、五类 Decode 内核、运行时准入、Paged KV Cache、CUDA Graph 与实验结果。'
-category: 'Research & Work'
+category: '论文阅读'
 pubDate: '2026-08-18T10:00:00+08:00'
 updatedDate: '2026-08-18T10:00:00+08:00'
 heroImage: '../../assets/agentcompile/overview.png'

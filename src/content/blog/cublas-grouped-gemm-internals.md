@@ -1,7 +1,7 @@
 ---
 title: 'Grouped GEMM 实战：cuBLAS 使用、CUTLASS 调度与 DeepGEMM MoE Kernel'
 description: '先讲清 cublasGemmGroupedBatchedEx 的正确用法，再沿 CUTLASS、Triton 与 DeepGEMM 开源源码分析 Persistent CTA、Problem Visitor、MoE contiguous/masked layout，以及 Hopper WGMMA 和 Blackwell UMMA/TMEM 实现。'
-category: 'Research & Work'
+category: '源码学习'
 pubDate: '2026-07-29T13:24:00+08:00'
 updatedDate: '2026-07-30T17:13:23+08:00'
 ---

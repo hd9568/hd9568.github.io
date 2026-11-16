@@ -1,7 +1,7 @@
 ---
 title: '算子中的吞吐与延迟：从 GPU 延迟隐藏到 Little’s Law'
 description: '从指令、Warp、Kernel、Batch 和在线服务五个层次讲清吞吐与延迟的区别，结合 CUDA Benchmark、流水线、内存并发、排队模型和 Little’s Law 推导算子优化中的并发需求与性能权衡。'
-category: 'Research & Work'
+category: 'CUDA'
 pubDate: '2026-08-14T16:00:00+08:00'
 updatedDate: '2026-08-14T16:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

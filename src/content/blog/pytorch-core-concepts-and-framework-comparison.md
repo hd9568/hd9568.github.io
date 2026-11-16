@@ -1,7 +1,7 @@
 ---
 title: 'PyTorch 核心理念与框架对比：从动态图、Autograd 到 PyTorch / TensorFlow / Paddle API 兼容'
 description: '结合框架 API 兼容和模型迁移场景，系统讲解 PyTorch 的核心设计、张量、动态图、Autograd、Module、DataLoader、编译路径，并用代码对比 PyTorch、TensorFlow 和 PaddlePaddle。'
-category: 'Research & Work'
+category: '工程实现'
 pubDate: '2026-07-13T16:41:00+08:00'
 updatedDate: '2026-07-13T16:41:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

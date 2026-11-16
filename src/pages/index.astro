@@ -7,7 +7,8 @@ import { SITE_TITLE, SITE_DESCRIPTION } from '../consts';
 import { getBlog, categoryUrl, withBase, PREVIEW_SIZE } from '../lib/blog';
 const { posts, groups } = await getBlog();
 const layers = [
-  { index: '03', title: '模型与分布式系统', subtitle: 'INFERENCE · TRAINING', slugs: ['inference', 'training', 'research'] },
+  { index: '04', title: '论文、工程与源码', subtitle: 'PAPERS · ENGINEERING · SOURCE CODE', slugs: ['papers', 'engineering', 'source'] },
+  { index: '03', title: '模型与分布式系统', subtitle: 'INFERENCE · TRAINING', slugs: ['inference', 'training'] },
   { index: '02', title: 'GPU 与高性能计算', subtitle: 'CUDA · KERNEL OPTIMIZATION', slugs: ['cuda'] },
   { index: '01', title: '语言与系统基础', subtitle: 'C++ · ALGORITHMS · OS', slugs: ['cpp', 'algorithms', 'systems'] },
 ];
@@ -26,7 +27,7 @@ const layers = [
           <div class="hero-actions"><a class="button primary" href={withBase('blog/')}>开始阅读 <span aria-hidden="true">↗</span></a><a class="text-link" href="#topics">探索知识分类 <span aria-hidden="true">↓</span></a></div>
           <div class="hero-stats"><span><strong>{posts.length}</strong> 篇学习笔记</span><i></i><span><strong>{groups.length}</strong> 个知识分类</span><i></i><span>持续积累中 <span class="status-dot"></span></span></div>
         </div>
-        <div class="knowledge-map" aria-label="从语言基础到模型系统的知识层次">
+        <div class="knowledge-map" aria-label="从语言基础到模型系统，以及论文、工程与源码的学习入口">
           <div class="map-head"><span class="eyebrow">THE INFRA STACK</span><span class="map-cross" aria-hidden="true">+</span></div>
           {layers.map((layer) => (
             <div class="stack-layer">
@@ -78,6 +79,7 @@ const layers = [
   .stack-layer { display: flex; align-items: flex-start; position: relative; gap: 15px; background: #fafbf7; border: 1px solid #dce0d3; padding: 18px 17px 15px; margin-bottom: 10px; border-radius: 3px; }
   .stack-layer:nth-of-type(3) { margin-inline: 9px; }
   .stack-layer:nth-of-type(4) { margin-inline: 18px; }
+  .stack-layer:nth-of-type(5) { margin-inline: 27px; }
   .layer-number { color: #969c8c; font: 10px var(--font-mono); padding-top: 4px; }
   .layer-copy { flex: 1; }
   .layer-copy h2 { font-size: 14px; font-weight: 550; }

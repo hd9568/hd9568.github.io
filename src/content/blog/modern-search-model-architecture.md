@@ -1,7 +1,7 @@
 ---
 title: '现代搜索模型架构：从 BM25、双塔召回到多任务精排与 LLM 重排'
 description: '系统讲解现代互联网搜索的查询理解、多路召回、粗排、精排与重排架构，覆盖 BM25、SPLADE、双塔、ColBERT、Cross-Encoder、行为序列、多任务学习、去偏、蒸馏和生成式搜索。'
-category: 'Research & Work'
+category: '工程实现'
 pubDate: '2026-08-10T18:00:00+08:00'
 updatedDate: '2026-08-10T18:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

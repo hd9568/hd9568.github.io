@@ -1,7 +1,7 @@
 ---
 title: '稀疏矩阵乘法中的常见稀疏格式：COO、CSR、CSC、ELL、BSR 与 HYB'
 description: '系统梳理稀疏矩阵乘法中常见的稀疏存储格式，用具体矩阵说明表示方式、乘法访问路径、实现思路和优缺点。'
-category: 'Research & Work'
+category: 'CUDA'
 pubDate: '2026-06-24T18:15:00+08:00'
 updatedDate: '2026-06-24T18:15:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

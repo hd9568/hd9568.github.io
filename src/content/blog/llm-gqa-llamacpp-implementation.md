@@ -1,7 +1,7 @@
 ---
 title: '从 llama.cpp 源码看 GQA：num_kv_heads、KV Cache 与注意力计算'
 description: '结合 llama.cpp 源码讲解 GQA 的工程实现，从模型元数据、n_gqa、Q/K/V reshape、KV Cache 分配到 attention 计算逐层拆解。'
-category: '推理优化'
+category: '源码学习'
 pubDate: '2026-07-07T16:42:00+08:00'
 updatedDate: '2026-07-07T16:42:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

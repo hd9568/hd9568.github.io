@@ -1,7 +1,7 @@
 ---
 title: '大模型采样优化：从排序版 Top-K/Top-P 到 FlashInfer Dual-Pivot Rejection Sampling'
 description: '结合 FlashInfer 采样优化思路，讲解 LLM sampling 为什么会成为瓶颈，Top-K/Top-P/Min-P 的语义，排序路径的问题，以及 sorting-free GPU kernel 的核心算法。'
-category: 'Research & Work'
+category: '工程实现'
 pubDate: '2026-07-13T16:52:00+08:00'
 updatedDate: '2026-07-13T16:52:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

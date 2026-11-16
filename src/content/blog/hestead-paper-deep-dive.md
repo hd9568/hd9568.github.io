@@ -1,7 +1,7 @@
 ---
 title: 'HeSTEAD 论文精读：面向大规模异构程序分析的时空演化异常检测工具'
 description: '系统讲解 HeSTEAD 的研究背景、HLibrary、HCCG、HADEN、层次化性能分析、实验案例、开销评估，并结合源码拆解动态图神经网络模型实现。'
-category: 'Research & Work'
+category: '论文阅读'
 pubDate: '2026-07-18T12:41:00+08:00'
 updatedDate: '2026-07-18T12:41:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

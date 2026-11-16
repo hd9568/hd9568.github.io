@@ -1,7 +1,7 @@
 ---
 title: 'CUDA Graph 详解：为什么它能优化大模型 Decode 阶段'
 description: '结合大模型推理场景讲解 CUDA Graph 的核心思想、capture/replay 机制、适用条件、PyTorch 示例、形状管理和常见坑。'
-category: 'Research & Work'
+category: '工程实现'
 pubDate: '2026-07-13T16:51:00+08:00'
 updatedDate: '2026-07-13T16:51:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

@@ -1,7 +1,7 @@
 ---
 title: 'FlashAttention 1-4 全解析：从 IO-Aware 到 Blackwell 异步流水线'
 description: '从 Online Softmax 与分块推导出发，系统讲解 FlashAttention-1 到 FlashAttention-4 的 IO 优化、并行划分、Hopper 异步流水、FP8、Blackwell TMEM、2-CTA MMA 与条件重缩放。'
-category: 'Research & Work'
+category: '论文阅读'
 pubDate: '2026-08-10T12:00:00+08:00'
 updatedDate: '2026-08-10T12:00:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'

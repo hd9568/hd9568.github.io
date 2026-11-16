@@ -1,7 +1,7 @@
 ---
 title: 'Infra 领域常见术语速查：硬件、互联、网卡与性能指标'
 description: '面向 AI Infra 工作场景，梳理 HBM、NVLink、PCIe、InfiniBand、eth0、mlx5_0、NUMA、TTFT 等常见术语。'
-category: 'Research & Work'
+category: '操作系统与多线程'
 pubDate: '2026-06-02T16:09:00+08:00'
 updatedDate: '2026-06-02T16:09:00+08:00'
 heroImage: '../../assets/blog-placeholder-1.jpg'
@@ -425,4 +425,3 @@ Infra 术语可以按层次记忆：
 | Linux/驱动视角 | `eth0`、`ib0`、`mlx5_0`、`mlx5_core` |
 | 部署拓扑 | `NUMA`、`CPU Affinity`、`MIG`、`MPS` |
 | 服务指标 | `Bandwidth`、`Latency`、`TTFT`、`TPOT`、`P99` |
-
